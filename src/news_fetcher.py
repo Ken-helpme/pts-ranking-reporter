@@ -190,25 +190,34 @@ class NewsFetcher:
         }
 
         try:
-            # 市場区分
+            # 市場区分 (span.market)
             market_elem = soup.find('span', class_='market')
             if market_elem:
                 info['market'] = market_elem.text.strip()
 
-            # 業種
-            industry_elem = soup.find('span', class_='industry')
-            if industry_elem:
-                info['industry'] = industry_elem.text.strip()
+            # 業種 (div#stockinfo_i2 > div > a)
+            stockinfo_div = soup.find('div', id='stockinfo_i2')
+            if stockinfo_div:
+                industry_div = stockinfo_div.find('div')
+                if industry_div:
+                    industry_link = industry_div.find('a')
+                    if industry_link:
+                        info['industry'] = industry_link.text.strip()
 
-            # 時価総額
-            market_cap_elem = soup.find('td', text='時価総額')
+            # 時価総額 (th with "時価総額" text, then next td)
+            market_cap_elem = soup.find('th', string=lambda text: text and '時価総額' in text if text else False)
             if market_cap_elem:
                 market_cap_value = market_cap_elem.find_next('td')
                 if market_cap_value:
                     info['market_cap'] = market_cap_value.text.strip()
 
-            # 事業内容
-            description_elem = soup.find('div', class_='company_description')
+            # 事業内容 - look for various possible containers
+            # Try div with id containing "company" or "profile"
+            description_elem = (
+                soup.find('div', id=lambda x: x and 'company' in x.lower() if x else False) or
+                soup.find('div', class_='company_description') or
+                soup.find('div', class_='profile')
+            )
             if description_elem:
                 info['description'] = description_elem.text.strip()[:200]  # 最初の200文字
 
