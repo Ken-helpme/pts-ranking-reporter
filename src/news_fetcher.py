@@ -80,49 +80,61 @@ class NewsFetcher:
         """
         news_list = []
 
-        # 株探のニュース一覧を探す
-        # 注意: 実際のHTML構造に合わせて調整が必要
-        news_items = soup.find_all('div', class_='news_item') or soup.find_all('tr', class_='data')
+        # 株探のニュース一覧テーブルを探す (class="s_news_list")
+        news_table = soup.find('table', class_='s_news_list')
 
-        if not news_items:
-            # 別の構造を試す
-            news_table = soup.find('table', class_='stock_table')
-            if news_table:
-                news_items = news_table.find_all('tr')[1:]  # ヘッダー行をスキップ
+        if not news_table:
+            logger.warning("News table (s_news_list) not found")
+            return news_list
 
-        for item in news_items:
+        # テーブルの行を取得
+        rows = news_table.find_all('tr')
+
+        for row in rows:
             try:
-                # タイトルとリンクを取得
-                title_link = item.find('a')
+                # 各行は3列: [時刻][カテゴリ][タイトル&リンク]
+                cols = row.find_all('td')
+                if len(cols) < 3:
+                    continue
+
+                # 時刻を取得 (td.news_time > time)
+                time_td = cols[0]
+                time_elem = time_td.find('time')
+                date = time_elem.get_text(strip=True) if time_elem else ""
+
+                # カテゴリを取得 (div.newslist_ctg)
+                category_td = cols[1]
+                category_elem = category_td.find('div', class_='newslist_ctg')
+                category = category_elem.get_text(strip=True) if category_elem else ""
+
+                # タイトルとリンクを取得 (3列目の<a>)
+                title_td = cols[2]
+                title_link = title_td.find('a')
                 if not title_link:
                     continue
 
-                title = title_link.text.strip()
+                title = title_link.get_text(strip=True)
                 url = title_link.get('href', '')
 
                 # 相対URLを絶対URLに変換
                 if url and not url.startswith('http'):
                     url = f"{self.KABUTAN_BASE_URL}{url}"
 
-                # 日時を取得
-                date_elem = item.find('td', class_='date') or item.find('span', class_='date')
-                date = date_elem.text.strip() if date_elem else ""
-
-                # ニュースソースを取得（あれば）
-                source_elem = item.find('span', class_='source')
-                source = source_elem.text.strip() if source_elem else "株探"
+                # カテゴリをタイトルに含める（特に「材料」など重要）
+                if category:
+                    title = f"【{category}】{title}"
 
                 news_data = {
                     'title': title,
                     'date': date,
                     'url': url,
-                    'source': source,
+                    'source': "株探",
                 }
 
                 news_list.append(news_data)
 
             except Exception as e:
-                logger.warning(f"Error parsing news item: {e}")
+                logger.warning(f"Error parsing news row: {e}")
                 continue
 
         return news_list
