@@ -79,6 +79,10 @@ function displayRankingTable(data) {
         const changeClass = stock.change_rate >= 0 ? 'change-positive' : 'change-negative';
         const changeSign = stock.change_rate >= 0 ? '+' : '';
 
+        // Truncate main_reason to 100 characters
+        const mainReason = stock.main_reason || 'データ取得中...';
+        const displayReason = mainReason.length > 100 ? mainReason.substring(0, 100) + '...' : mainReason;
+
         row.innerHTML = `
             <td><span class="rank-badge">${index + 1}</span></td>
             <td><span class="stock-code">${stock.code}</span></td>
@@ -87,6 +91,7 @@ function displayRankingTable(data) {
             <td class="${changeClass}">${changeSign}${stock.change_rate.toFixed(2)}%</td>
             <td>${formatNumber(stock.volume)}</td>
             <td><span style="font-size: 12px;">${stock.market || '-'}</span></td>
+            <td><span style="font-size: 11px; color: #555;" title="${mainReason}">${displayReason}</span></td>
             <td><button class="btn-detail" onclick="showStockDetail('${stock.code}', '${stock.name}')">詳細</button></td>
         `;
 
@@ -262,6 +267,22 @@ async function showStockDetail(code, name) {
                 if (latestData.company_info.market_cap) {
                     html += `<div class="info-item"><div class="info-label">時価総額</div><div class="info-value">${latestData.company_info.market_cap}</div></div>`;
                 }
+                html += '</div>';
+            }
+
+            // Main reason (上昇理由)
+            if (latestData.main_reason) {
+                html += '<div style="margin-bottom: 24px; padding: 16px; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px;">';
+                html += `<h3 style="margin-bottom: 12px; color: #856404;">📊 上昇理由</h3>`;
+                html += `<p style="margin: 0; line-height: 1.6;">${latestData.main_reason}</p>`;
+                html += '</div>';
+            }
+
+            // Future potential (将来性評価)
+            if (latestData.future_potential) {
+                html += '<div style="margin-bottom: 24px; padding: 16px; background: #d1ecf1; border-left: 4px solid #17a2b8; border-radius: 4px;">';
+                html += `<h3 style="margin-bottom: 12px; color: #0c5460;">🔮 将来性評価</h3>`;
+                html += `<p style="margin: 0; line-height: 1.6;">${latestData.future_potential}</p>`;
                 html += '</div>';
             }
 

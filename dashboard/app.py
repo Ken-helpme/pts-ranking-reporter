@@ -14,6 +14,8 @@ from models import init_db, save_pts_data, get_latest_ranking, get_historical_da
 from scraper import KabutanScraper
 from analyzer import PTSAnalyzer
 from news_fetcher import NewsFetcher
+from stock_analyzer import StockAnalyzer
+from disclosure_fetcher import DisclosureFetcher
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'pts-ranking-dashboard-secret-key'
@@ -66,6 +68,10 @@ def fetch_new_data():
         timestamp = datetime.now().isoformat()
         saved_count = 0
 
+        # Initialize analyzers
+        stock_analyzer = StockAnalyzer()
+        disclosure_fetcher = DisclosureFetcher()
+
         for stock in filtered_stocks:
             code = stock['code']
 
@@ -77,13 +83,32 @@ def fetch_new_data():
             news = news_fetcher.fetch_stock_news(code)
             company = news_fetcher.get_company_info(code) or {}
 
+            # 開示情報を取得
+            disclosure_info = disclosure_fetcher.fetch_disclosure_info(code)
+
+            # 決算の場合は開示情報も分析に含める
+            if disclosure_info.get('has_earnings'):
+                # 決算情報をニュースリストに追加
+                earnings_impact = disclosure_fetcher.analyze_earnings_impact(disclosure_info)
+                if earnings_impact:
+                    news.insert(0, {
+                        'title': f"【決算】{disclosure_info['earnings_summary']}",
+                        'date': disclosure_info['disclosures'][0]['date'] if disclosure_info['disclosures'] else '',
+                        'url': disclosure_info['disclosures'][0]['url'] if disclosure_info['disclosures'] else '',
+                        'source': '開示情報'
+                    })
+
+            # 上昇理由と将来性を分析
+            analysis = stock_analyzer.analyze_price_increase_reason(news, stock)
+
             # Save to DB
-            save_pts_data(stock, news, company, timestamp)
+            save_pts_data(stock, news, company, timestamp, analysis)
             saved_count += 1
 
         # Cleanup
         scraper.close()
         news_fetcher.close()
+        disclosure_fetcher.close()
 
         return jsonify({
             'success': True,

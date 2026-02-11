@@ -27,9 +27,28 @@ def init_db():
             market TEXT,
             company_info TEXT,
             news TEXT,
+            main_reason TEXT,
+            analysis TEXT,
+            future_potential TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+
+    # Add new columns if they don't exist (for existing databases)
+    try:
+        cursor.execute('ALTER TABLE pts_ranking ADD COLUMN main_reason TEXT')
+    except:
+        pass  # Column already exists
+
+    try:
+        cursor.execute('ALTER TABLE pts_ranking ADD COLUMN analysis TEXT')
+    except:
+        pass
+
+    try:
+        cursor.execute('ALTER TABLE pts_ranking ADD COLUMN future_potential TEXT')
+    except:
+        pass
 
     # Create index for faster queries
     cursor.execute('''
@@ -43,7 +62,8 @@ def init_db():
     conn.commit()
     conn.close()
 
-def save_pts_data(stock: Dict, news: List[Dict], company: Dict, timestamp: str = None):
+def save_pts_data(stock: Dict, news: List[Dict], company: Dict, timestamp: str = None,
+                 analysis: Dict = None):
     """PTSデータを保存"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -51,11 +71,16 @@ def save_pts_data(stock: Dict, news: List[Dict], company: Dict, timestamp: str =
     if timestamp is None:
         timestamp = datetime.now().isoformat()
 
+    # 分析データを取得
+    main_reason = analysis.get('main_reason', '') if analysis else ''
+    future_potential = analysis.get('future_potential', '') if analysis else ''
+    analysis_json = json.dumps(analysis, ensure_ascii=False) if analysis else '{}'
+
     cursor.execute('''
         INSERT INTO pts_ranking
         (stock_code, stock_name, pts_price, change_rate, change_amount,
-         volume, market, company_info, news, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         volume, market, company_info, news, main_reason, analysis, future_potential, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         stock['code'],
         stock['name'],
@@ -66,6 +91,9 @@ def save_pts_data(stock: Dict, news: List[Dict], company: Dict, timestamp: str =
         stock.get('market', ''),
         json.dumps(company, ensure_ascii=False),
         json.dumps(news, ensure_ascii=False),
+        main_reason,
+        analysis_json,
+        future_potential,
         timestamp
     ))
 
@@ -88,7 +116,7 @@ def get_latest_ranking(limit: int = 20) -> List[Dict]:
     # Get all stocks from the latest batch (within 1 second window)
     cursor.execute('''
         SELECT stock_code, stock_name, pts_price, change_rate, change_amount,
-               volume, market, company_info, news, created_at
+               volume, market, company_info, news, main_reason, analysis, future_potential, created_at
         FROM pts_ranking
         WHERE datetime(created_at) >= datetime(?, '-1 second')
         ORDER BY change_rate DESC, created_at DESC
@@ -110,7 +138,10 @@ def get_latest_ranking(limit: int = 20) -> List[Dict]:
             'market': row[6],
             'company_info': json.loads(row[7]) if row[7] else {},
             'news': json.loads(row[8]) if row[8] else [],
-            'timestamp': row[9]
+            'main_reason': row[9] or '',
+            'analysis': json.loads(row[10]) if row[10] else {},
+            'future_potential': row[11] or '',
+            'timestamp': row[12]
         })
 
     return result
@@ -125,7 +156,7 @@ def get_historical_data(days: int = 7, stock_code: Optional[str] = None) -> List
     if stock_code:
         cursor.execute('''
             SELECT stock_code, stock_name, pts_price, change_rate, change_amount,
-                   volume, market, company_info, news, created_at
+                   volume, market, company_info, news, main_reason, analysis, future_potential, created_at
             FROM pts_ranking
             WHERE stock_code = ? AND created_at >= ?
             ORDER BY created_at DESC
@@ -133,7 +164,7 @@ def get_historical_data(days: int = 7, stock_code: Optional[str] = None) -> List
     else:
         cursor.execute('''
             SELECT stock_code, stock_name, pts_price, change_rate, change_amount,
-                   volume, market, company_info, news, created_at
+                   volume, market, company_info, news, main_reason, analysis, future_potential, created_at
             FROM pts_ranking
             WHERE created_at >= ?
             ORDER BY created_at DESC, change_rate DESC
@@ -154,7 +185,10 @@ def get_historical_data(days: int = 7, stock_code: Optional[str] = None) -> List
             'market': row[6],
             'company_info': json.loads(row[7]) if row[7] else {},
             'news': json.loads(row[8]) if row[8] else [],
-            'timestamp': row[9]
+            'main_reason': row[9] or '',
+            'analysis': json.loads(row[10]) if row[10] else {},
+            'future_potential': row[11] or '',
+            'timestamp': row[12]
         })
 
     return result
