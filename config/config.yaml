@@ -1,0 +1,32 @@
+# PTSランキングレポーター設定ファイル
+
+# データ取得設定
+scraping:
+  retry_count: 3  # リトライ回数
+  retry_delay: 2.0  # リトライ間隔（秒）
+  request_delay: 1.0  # リクエスト間隔（秒）
+
+# データフィルタリング設定
+filtering:
+  min_volume: 10000  # 最小出来高（この値未満は除外）
+  top_n: 10  # 取得する上位銘柄数
+
+# ニュース取得設定
+news:
+  max_news_per_stock: 3  # 1銘柄あたりの最大ニュース数
+
+# チャート設定
+chart:
+  chart_dir: "/tmp/charts"  # チャート画像保存ディレクトリ
+  chart_type: "d"  # チャートタイプ (d: 日足, w: 週足, m: 月足)
+  cleanup_hours: 24  # 古いチャート削除の経過時間（時間）
+
+# LINE Notify設定
+line:
+  # アクセストークンは環境変数 LINE_NOTIFY_TOKEN から取得
+  send_summary: true  # サマリー送信の有無
+  send_error_notification: true  # エラー通知の有無
+
+# ロギング設定
+logging:
+  level: "INFO"  # ログレベル (DEBUG, INFO, WARNING, ERROR, CRITICAL)
