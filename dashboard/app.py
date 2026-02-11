@@ -16,6 +16,7 @@ from analyzer import PTSAnalyzer
 from news_fetcher import NewsFetcher
 from stock_analyzer import StockAnalyzer
 from disclosure_fetcher import DisclosureFetcher
+from earnings_analyzer import EarningsAnalyzer
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'pts-ranking-dashboard-secret-key'
@@ -71,6 +72,7 @@ def fetch_new_data():
         # Initialize analyzers
         stock_analyzer = StockAnalyzer()
         disclosure_fetcher = DisclosureFetcher()
+        earnings_analyzer = EarningsAnalyzer()  # Claude APIで決算を深掘り分析
 
         for stock in filtered_stocks:
             code = stock['code']
@@ -85,21 +87,41 @@ def fetch_new_data():
 
             # 開示情報を取得
             disclosure_info = disclosure_fetcher.fetch_disclosure_info(code)
+            earnings_detail = None
 
             # 決算の場合は開示情報も分析に含める
             if disclosure_info.get('has_earnings'):
                 # 決算情報をニュースリストに追加
                 earnings_impact = disclosure_fetcher.analyze_earnings_impact(disclosure_info)
-                if earnings_impact:
-                    news.insert(0, {
-                        'title': f"【決算】{disclosure_info['earnings_summary']}",
-                        'date': disclosure_info['disclosures'][0]['date'] if disclosure_info['disclosures'] else '',
-                        'url': disclosure_info['disclosures'][0]['url'] if disclosure_info['disclosures'] else '',
-                        'source': '開示情報'
-                    })
+
+                # Claude APIで決算を深掘り分析
+                disclosure_title = disclosure_info['disclosures'][0]['title'] if disclosure_info['disclosures'] else disclosure_info['earnings_summary']
+                earnings_detail = earnings_analyzer.analyze_earnings_detail(
+                    disclosure_title,
+                    news,
+                    stock
+                )
+
+                # 決算情報をニュースの最初に追加
+                earnings_news = {
+                    'title': f"【決算】{disclosure_info['earnings_summary']}",
+                    'date': disclosure_info['disclosures'][0]['date'] if disclosure_info['disclosures'] else '',
+                    'url': disclosure_info['disclosures'][0]['url'] if disclosure_info['disclosures'] else '',
+                    'source': '開示情報'
+                }
+
+                # Claude分析結果を追加
+                if earnings_detail and earnings_detail.get('earnings_reason'):
+                    earnings_news['title'] += f" - {earnings_detail['earnings_reason']}"
+
+                news.insert(0, earnings_news)
 
             # 上昇理由と将来性を分析
             analysis = stock_analyzer.analyze_price_increase_reason(news, stock)
+
+            # 決算の詳細分析を追加
+            if earnings_detail:
+                analysis['earnings_detail'] = earnings_detail
 
             # Save to DB
             save_pts_data(stock, news, company, timestamp, analysis)
