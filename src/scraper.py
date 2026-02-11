@@ -3,6 +3,7 @@
 """
 import requests
 from bs4 import BeautifulSoup
+import re
 import time
 from typing import List, Dict, Optional
 import logging
