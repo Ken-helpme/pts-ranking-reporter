@@ -206,14 +206,21 @@ class KabutanScraper:
 
             soup = BeautifulSoup(response.text, 'lxml')
 
-            # h3タグから会社名を取得
+            # h3タグから会社名を取得（h3には会社名のみ）
             h3 = soup.find('h3')
             if h3:
                 name_text = h3.get_text(strip=True)
-                # "6072 地盤ネットホールディングス" から会社名を抽出
-                parts = name_text.split(maxsplit=1)
-                if len(parts) > 1:
-                    return parts[1]
+                if name_text:
+                    return name_text
+
+            # titleタグから抽出（バックアップ）
+            title = soup.find('title')
+            if title:
+                title_text = title.get_text()
+                # "地盤ネットホールディングス（地盤ＨＤ）【6072】" から抽出
+                match = re.match(r'([^（【]+)', title_text)
+                if match:
+                    return match.group(1).strip()
 
             return ""
 
