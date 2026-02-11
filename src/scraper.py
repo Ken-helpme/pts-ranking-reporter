@@ -15,7 +15,7 @@ class KabutanScraper:
     """株探からPTSランキングをスクレイピングするクラス"""
 
     BASE_URL = "https://kabutan.jp"
-    PTS_RANKING_URL = f"{BASE_URL}/warning/pts_up.html"
+    PTS_RANKING_URL = f"{BASE_URL}/warning/pts_night_price_increase"
 
     HEADERS = {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -97,42 +97,53 @@ class KabutanScraper:
         for row in rows:
             try:
                 cols = row.find_all('td')
-                if len(cols) < 6:
+                if len(cols) < 7:
                     continue
 
-                # 銘柄コードとリンクを取得
-                code_link = cols[1].find('a')
-                if not code_link:
+                # 正しいテーブル構造:
+                # cols[0]: 銘柄コード
+                # cols[1]: 市場
+                # cols[4]: 前日価格
+                # cols[5]: PTS価格
+                # cols[6]: 変化額
+                # cols[7]: 変化率%
+                # cols[8]: 出来高
+
+                code = cols[0].text.strip()
+                if not code or not code.isdigit():
                     continue
 
-                code = code_link.text.strip()
-                name = cols[2].text.strip()
+                market = cols[1].text.strip()
+                name = ""  # このテーブルには会社名がない
+
+                # 前日価格
+                prev_price_text = cols[4].text.strip().replace(',', '')
+                prev_price = self._parse_number(prev_price_text)
 
                 # PTS価格
-                pts_price_text = cols[3].text.strip().replace(',', '')
+                pts_price_text = cols[5].text.strip().replace(',', '')
                 pts_price = self._parse_number(pts_price_text)
 
-                # 変化率
-                change_rate_text = cols[4].text.strip().replace('%', '').replace('+', '')
-                change_rate = self._parse_number(change_rate_text)
-
                 # 変化額
-                change_amount_text = cols[5].text.strip().replace(',', '').replace('+', '')
+                change_amount_text = cols[6].text.strip().replace(',', '').replace('+', '')
                 change_amount = self._parse_number(change_amount_text)
 
+                # 変化率（%で提供されている）
+                change_rate_text = cols[7].text.strip().replace('%', '').replace('+', '')
+                change_rate = self._parse_number(change_rate_text)
+
                 # 出来高
-                volume_text = cols[6].text.strip().replace(',', '')
+                volume_text = cols[8].text.strip().replace(',', '') if len(cols) > 8 else '0'
                 volume = self._parse_number(volume_text, is_int=True)
 
-                # 市場区分（あれば）
-                market = cols[7].text.strip() if len(cols) > 7 else ""
+                # 変化率は既に取得済み（上のコードで）
 
                 stock_data = {
                     'code': code,
                     'name': name,
-                    'pts_price': pts_price,
+                    'pts_price': pts_price or 0,
                     'change_rate': change_rate,
-                    'change_amount': change_amount,
+                    'change_amount': change_amount or 0,
                     'volume': volume,
                     'market': market,
                 }
