@@ -272,44 +272,23 @@ async function showStockDetail(code, name) {
 
             // Main reason (上昇理由)
             if (latestData.main_reason) {
-                html += '<div class="analysis-section">';
-                html += `<h3>上昇理由</h3>`;
-                html += `<p>${latestData.main_reason}</p>`;
-                html += '</div>';
-            }
-
-            // Earnings detail (決算分析)
-            if (latestData.analysis && latestData.analysis.earnings_detail) {
-                const earnings = latestData.analysis.earnings_detail;
-                html += '<div class="analysis-section">';
-                html += `<h3>決算分析（Claude AI）</h3>`;
-                if (earnings.earnings_reason) {
-                    html += `<p><strong>決算内容:</strong> ${earnings.earnings_reason}</p>`;
-                }
-                if (earnings.key_factors && earnings.key_factors.length > 0) {
-                    html += '<p><strong>主要な要因:</strong></p><ul>';
-                    earnings.key_factors.forEach(factor => {
-                        html += `<li>${factor}</li>`;
-                    });
-                    html += '</ul>';
-                }
-                if (earnings.outlook) {
-                    html += `<p><strong>今後の見通し:</strong> ${earnings.outlook}</p>`;
-                }
+                html += '<div style="margin-bottom: 24px; padding: 16px; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px;">';
+                html += `<h3 style="margin-bottom: 12px; color: #856404;">📊 上昇理由</h3>`;
+                html += `<p style="margin: 0; line-height: 1.6;">${latestData.main_reason}</p>`;
                 html += '</div>';
             }
 
             // Future potential (将来性評価)
             if (latestData.future_potential) {
-                html += '<div class="analysis-section">';
-                html += `<h3>将来性評価</h3>`;
-                html += `<p>${latestData.future_potential}</p>`;
+                html += '<div style="margin-bottom: 24px; padding: 16px; background: #d1ecf1; border-left: 4px solid #17a2b8; border-radius: 4px;">';
+                html += `<h3 style="margin-bottom: 12px; color: #0c5460;">🔮 将来性評価</h3>`;
+                html += `<p style="margin: 0; line-height: 1.6;">${latestData.future_potential}</p>`;
                 html += '</div>';
             }
 
             // Current stats
             html += '<div style="margin-bottom: 24px;">';
-            html += `<h3 style="margin-bottom: 12px;">現在の情報</h3>`;
+            html += `<h3 style="margin-bottom: 12px;">💰 現在の情報</h3>`;
             html += `<p><strong>PTS価格:</strong> ¥${formatNumber(latestData.pts_price)}</p>`;
             html += `<p><strong>変化率:</strong> <span class="${latestData.change_rate >= 0 ? 'change-positive' : 'change-negative'}">${latestData.change_rate >= 0 ? '+' : ''}${latestData.change_rate.toFixed(2)}%</span></p>`;
             html += `<p><strong>出来高:</strong> ${formatNumber(latestData.volume)}株</p>`;
@@ -317,7 +296,7 @@ async function showStockDetail(code, name) {
 
             // News
             if (latestData.news && latestData.news.length > 0) {
-                html += '<h3 style="margin-bottom: 12px;">最新ニュース</h3>';
+                html += '<h3 style="margin-bottom: 12px;">📰 最新ニュース</h3>';
                 latestData.news.forEach(newsItem => {
                     html += '<div class="news-item">';
                     html += `<div class="news-title">${newsItem.title}</div>`;
