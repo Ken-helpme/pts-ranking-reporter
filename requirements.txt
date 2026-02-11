@@ -12,3 +12,7 @@ schedule==1.2.0
 
 # Data Processing
 python-dateutil==2.8.2
+
+# PDF Analysis
+pypdf2==3.0.1
+pdfplumber==0.11.9
