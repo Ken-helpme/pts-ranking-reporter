@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PTS Ranking Dashboard | リアルタイム監視</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">
+                    <span class="logo-icon">📈</span>
+                    <h1>PTS Ranking Dashboard</h1>
+                </div>
+                <div class="header-actions">
+                    <button class="btn btn-primary" onclick="fetchNewData()">
+                        <span class="btn-icon">🔄</span>
+                        データ更新
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="container">
+
+            <!-- Stats Cards -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">💰</div>
+                    <div class="stat-info">
+                        <div class="stat-label">平均上昇率</div>
+                        <div class="stat-value" id="avgChangeRate">--</div>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-icon">🚀</div>
+                    <div class="stat-info">
+                        <div class="stat-label">最大上昇率</div>
+                        <div class="stat-value" id="maxChangeRate">--</div>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-icon">📊</div>
+                    <div class="stat-info">
+                        <div class="stat-label">総出来高</div>
+                        <div class="stat-value" id="totalVolume">--</div>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-icon">📈</div>
+                    <div class="stat-info">
+                        <div class="stat-label">対象銘柄数</div>
+                        <div class="stat-value" id="totalStocks">--</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Charts Section -->
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <div class="card-header">
+                        <h3>上昇率トップ10</h3>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="topStocksChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-card">
+                    <div class="card-header">
+                        <h3>出来高分布</h3>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="volumeChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Rankings Table -->
+            <div class="table-card">
+                <div class="card-header">
+                    <h3>📋 最新PTSランキング</h3>
+                    <div class="last-updated">
+                        最終更新: <span id="lastUpdated">--</span>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="loadingIndicator" class="loading">
+                        <div class="spinner"></div>
+                        <p>データを読み込み中...</p>
+                    </div>
+                    <div id="rankingTable" style="display: none;">
+                        <table class="ranking-table">
+                            <thead>
+                                <tr>
+                                    <th>順位</th>
+                                    <th>コード</th>
+                                    <th>銘柄名</th>
+                                    <th>PTS価格</th>
+                                    <th>変化率</th>
+                                    <th>出来高</th>
+                                    <th>市場</th>
+                                    <th>詳細</th>
+                                </tr>
+                            </thead>
+                            <tbody id="rankingTableBody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Stock Detail Modal -->
+    <div id="stockModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalStockName">--</h2>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="modalContent">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p>詳細情報を読み込み中...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast"></div>
+
+    <!-- Scripts -->
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>
