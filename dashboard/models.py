@@ -43,10 +43,13 @@ def init_db():
     conn.commit()
     conn.close()
 
-def save_pts_data(stock: Dict, news: List[Dict], company: Dict):
+def save_pts_data(stock: Dict, news: List[Dict], company: Dict, timestamp: str = None):
     """PTSデータを保存"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+
+    if timestamp is None:
+        timestamp = datetime.now().isoformat()
 
     cursor.execute('''
         INSERT INTO pts_ranking
@@ -63,7 +66,7 @@ def save_pts_data(stock: Dict, news: List[Dict], company: Dict):
         stock.get('market', ''),
         json.dumps(company, ensure_ascii=False),
         json.dumps(news, ensure_ascii=False),
-        datetime.now().isoformat()
+        timestamp
     ))
 
     conn.commit()
@@ -82,13 +85,13 @@ def get_latest_ranking(limit: int = 20) -> List[Dict]:
         conn.close()
         return []
 
-    # Get all stocks from that timestamp
+    # Get all stocks from the latest batch (within 1 second window)
     cursor.execute('''
         SELECT stock_code, stock_name, pts_price, change_rate, change_amount,
                volume, market, company_info, news, created_at
         FROM pts_ranking
-        WHERE created_at = ?
-        ORDER BY change_rate DESC
+        WHERE datetime(created_at) >= datetime(?, '-1 second')
+        ORDER BY change_rate DESC, created_at DESC
         LIMIT ?
     ''', (latest_time, limit))
 
