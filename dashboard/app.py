@@ -48,7 +48,7 @@ def fetch_new_data():
     try:
         # Scrape PTS ranking
         scraper = KabutanScraper()
-        analyzer = PTSAnalyzer(min_volume=10000, top_n=20)
+        analyzer = PTSAnalyzer(min_volume=100, top_n=20)  # フィルター緩和
         news_fetcher = NewsFetcher(max_news=3)
 
         stocks = scraper.fetch_pts_ranking()
@@ -61,17 +61,24 @@ def fetch_new_data():
 
         filtered_stocks = analyzer.filter_and_rank(stocks)
 
-        # Save to database
+        # Save to database with same timestamp
+        from datetime import datetime
+        timestamp = datetime.now().isoformat()
         saved_count = 0
+
         for stock in filtered_stocks:
             code = stock['code']
+
+            # 銘柄名を取得（空の場合のみ）
+            if not stock.get('name'):
+                stock['name'] = scraper.fetch_stock_name(code)
 
             # Fetch additional info
             news = news_fetcher.fetch_stock_news(code)
             company = news_fetcher.get_company_info(code) or {}
 
             # Save to DB
-            save_pts_data(stock, news, company)
+            save_pts_data(stock, news, company, timestamp)
             saved_count += 1
 
         # Cleanup

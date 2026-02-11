@@ -189,6 +189,38 @@ class KabutanScraper:
         """
         return f"{self.BASE_URL}/stock/?code={code}"
 
+    def fetch_stock_name(self, code: str) -> str:
+        """
+        銘柄コードから会社名を取得
+
+        Args:
+            code: 銘柄コード (4桁)
+
+        Returns:
+            str: 会社名
+        """
+        try:
+            url = f"{self.BASE_URL}/stock/?code={code}"
+            response = self.session.get(url, timeout=10)
+            response.raise_for_status()
+
+            soup = BeautifulSoup(response.text, 'lxml')
+
+            # h3タグから会社名を取得
+            h3 = soup.find('h3')
+            if h3:
+                name_text = h3.get_text(strip=True)
+                # "6072 地盤ネットホールディングス" から会社名を抽出
+                parts = name_text.split(maxsplit=1)
+                if len(parts) > 1:
+                    return parts[1]
+
+            return ""
+
+        except Exception as e:
+            logger.warning(f"Error fetching stock name for {code}: {e}")
+            return ""
+
     def close(self):
         """セッションをクローズ"""
         self.session.close()
