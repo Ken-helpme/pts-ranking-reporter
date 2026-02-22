@@ -1,7 +1,5 @@
 // PTS ダッシュボード JavaScript
 
-let topStocksChart = null;
-let volumeChart = null;
 
 // ページ読み込み時にダッシュボードを初期化
 document.addEventListener('DOMContentLoaded', function () {
@@ -55,7 +53,6 @@ async function loadLatestRanking() {
 
         if (result.success && result.data.length > 0) {
             displayRankingTable(result.data);
-            updateCharts(result.data);
 
             loadingIndicator.style.display = 'none';
             rankingTable.style.display = 'block';
@@ -120,101 +117,6 @@ function displayRankingTable(data) {
     });
 }
 
-// チャートを更新
-function updateCharts(data) {
-    const top10 = data.slice(0, 10);
-
-    const chartData = {
-        labels: top10.map(s => `${s.code} ${s.name.substring(0, 10)}`),
-        datasets: [{
-            label: '上昇率 (%)',
-            data: top10.map(s => s.change_rate),
-            backgroundColor: top10.map(s =>
-                s.change_rate >= 0
-                    ? 'rgba(37, 99, 235, 0.7)'
-                    : 'rgba(220, 38, 38, 0.7)'
-            ),
-            borderColor: top10.map(s =>
-                s.change_rate >= 0
-                    ? 'rgba(37, 99, 235, 1)'
-                    : 'rgba(220, 38, 38, 1)'
-            ),
-            borderWidth: 1,
-            borderRadius: 4
-        }]
-    };
-
-    const chartConfig = {
-        type: 'bar',
-        data: chartData,
-        options: {
-            responsive: true,
-            maintainAspectRatio: true,
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    backgroundColor: 'rgba(0, 0, 0, 0.75)',
-                    padding: 10,
-                    titleFont: { size: 13 },
-                    bodyFont: { size: 12 },
-                    cornerRadius: 4
-                }
-            },
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    grid: { color: 'rgba(0, 0, 0, 0.05)' }
-                },
-                x: {
-                    grid: { display: false }
-                }
-            }
-        }
-    };
-
-    if (topStocksChart) topStocksChart.destroy();
-    topStocksChart = new Chart(document.getElementById('topStocksChart'), chartConfig);
-
-    // 出来高チャート
-    const volumeData = {
-        labels: top10.map(s => s.code),
-        datasets: [{
-            label: '出来高',
-            data: top10.map(s => s.volume),
-            backgroundColor: 'rgba(37, 99, 235, 0.6)',
-            borderColor: 'rgba(37, 99, 235, 1)',
-            borderWidth: 1
-        }]
-    };
-
-    const volumeConfig = {
-        type: 'doughnut',
-        data: volumeData,
-        options: {
-            responsive: true,
-            maintainAspectRatio: true,
-            plugins: {
-                legend: {
-                    position: 'right',
-                    labels: { font: { size: 12 }, padding: 10 }
-                },
-                tooltip: {
-                    backgroundColor: 'rgba(0, 0, 0, 0.75)',
-                    padding: 10,
-                    cornerRadius: 4,
-                    callbacks: {
-                        label: function (context) {
-                            return context.label + ': ' + formatNumber(context.parsed) + '株';
-                        }
-                    }
-                }
-            }
-        }
-    };
-
-    if (volumeChart) volumeChart.destroy();
-    volumeChart = new Chart(document.getElementById('volumeChart'), volumeConfig);
-}
 
 // 新規データを取得
 async function fetchNewData() {
