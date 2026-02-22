@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="ja">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,6 +9,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
+
 <body>
     <!-- Header -->
     <header class="header">
@@ -66,26 +68,8 @@
                 </div>
             </div>
 
-            <!-- Charts Section -->
-            <div class="charts-grid">
-                <div class="chart-card">
-                    <div class="card-header">
-                        <h3>上昇率トップ10</h3>
-                    </div>
-                    <div class="card-body">
-                        <canvas id="topStocksChart"></canvas>
-                    </div>
-                </div>
 
-                <div class="chart-card">
-                    <div class="card-header">
-                        <h3>出来高分布</h3>
-                    </div>
-                    <div class="card-body">
-                        <canvas id="volumeChart"></canvas>
-                    </div>
-                </div>
-            </div>
+
 
             <!-- Rankings Table -->
             <div class="table-card">
@@ -151,4 +135,5 @@
     <!-- Scripts -->
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 </body>
+
 </html>
