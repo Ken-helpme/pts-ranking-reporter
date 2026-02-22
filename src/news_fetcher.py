@@ -139,6 +139,97 @@ class NewsFetcher:
 
         return news_list
 
+    def fetch_news_article_content(self, url: str) -> Optional[str]:
+        """
+        株探のニュース記事本文を取得
+
+        Args:
+            url: 記事URL（例: https://kabutan.jp/stock/news?code=4240&b=k202602130726）
+
+        Returns:
+            str: 記事本文テキスト
+        """
+        try:
+            if not url or not url.startswith('http'):
+                return None
+
+            response = self.session.get(url, timeout=15)
+            response.raise_for_status()
+            response.encoding = response.apparent_encoding
+
+            soup = BeautifulSoup(response.text, 'lxml')
+
+            # 記事タイトル
+            title = ''
+            h1 = soup.find('h1')
+            if h1:
+                title = h1.get_text(strip=True)
+
+            # 記事本文（article タグ優先）
+            content = ''
+            article = soup.find('article')
+            if article:
+                content = article.get_text(separator='\n', strip=True)
+            else:
+                # divでも試す
+                for div_class in ['news_text', 'article_body', 'content']:
+                    div = soup.find('div', class_=div_class)
+                    if div:
+                        content = div.get_text(separator='\n', strip=True)
+                        break
+
+            if not content:
+                return None
+
+            # 広告・注意書きなどを除去（800文字までで十分な情報が得られる）
+            # 「当サイト」以降は免責事項なので除去
+            if '当サイト' in content:
+                content = content[:content.index('当サイト')]
+
+            result = f"【{title}】\n{content[:2000]}" if title else content[:2000]
+            return result.strip()
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch article content from {url}: {e}")
+            return None
+
+    def fetch_relevant_articles(self, news_list: list, max_articles: int = 3) -> str:
+        """
+        ニュースリストから決算・材料関連の記事本文を取得してまとめる
+
+        Args:
+            news_list: ニュースリスト（title, url を含む）
+            max_articles: 取得する最大記事数
+
+        Returns:
+            str: 複数記事の本文をまとめたテキスト
+        """
+        articles = []
+
+        # 優先度順に分類（決算関連 > 材料 > その他）
+        top_keywords = ['決算', '業績', '経常', '上方修正', '下方修正', '増益', '増収', '最終益', '営業益', '着地']
+        mid_keywords = ['材料', '急騰', '上昇', '株価']
+
+        top_news = [n for n in news_list if any(kw in n.get('title', '') for kw in top_keywords)]
+        mid_news = [n for n in news_list if n not in top_news and any(kw in n.get('title', '') for kw in mid_keywords)]
+        other_news = [n for n in news_list if n not in top_news and n not in mid_news]
+        sorted_news = top_news + mid_news + other_news
+
+        fetched = 0
+        for news in sorted_news:
+            if fetched >= max_articles:
+                break
+            url = news.get('url', '')
+            if not url or 'disclosures/pdf' in url:
+                continue
+
+            content = self.fetch_news_article_content(url)
+            if content:
+                articles.append(content)
+                fetched += 1
+
+        return '\n\n---\n\n'.join(articles) if articles else ''
+
     def get_company_info(self, stock_code: str) -> Optional[Dict[str, str]]:
         """
         銘柄の基本情報を取得
@@ -187,6 +278,10 @@ class NewsFetcher:
             'industry': '',
             'market_cap': '',
             'description': '',
+            'per': '',
+            'pbr': '',
+            'dividend_yield': '',
+            'roe': '',
         }
 
         try:
@@ -210,6 +305,38 @@ class NewsFetcher:
                 market_cap_value = market_cap_elem.find_next('td')
                 if market_cap_value:
                     info['market_cap'] = market_cap_value.text.strip()
+
+            # PER・PBR（div#stockinfo_i3 テーブルから位置ベースで取得）
+            # thead: [PER, PBR, 利回り, 信用倍率]
+            # tbody: [td[0]=PER値, td[1]=PBR値, td[2]=利回り値, td[3]=信用倍率値]
+            stockinfo_i3 = soup.find('div', id='stockinfo_i3')
+            if stockinfo_i3:
+                table = stockinfo_i3.find('table')
+                if table:
+                    tbody = table.find('tbody')
+                    if tbody:
+                        first_row = tbody.find('tr')
+                        if first_row:
+                            tds = first_row.find_all('td')
+                            if len(tds) >= 2:
+                                per_text = tds[0].get_text(strip=True).replace('倍', '').strip()
+                                pbr_text = tds[1].get_text(strip=True).replace('倍', '').strip()
+                                info['per'] = per_text
+                                info['pbr'] = pbr_text
+
+            # 配当利回り
+            div_elem = soup.find('th', string=lambda text: text and '配当利回り' in text if text else False)
+            if div_elem:
+                div_value = div_elem.find_next('td')
+                if div_value:
+                    info['dividend_yield'] = div_value.text.strip().replace('%', '').strip()
+
+            # ROE (自己資本利益率)
+            roe_elem = soup.find('th', string=lambda text: text and 'ROE' in text if text else False)
+            if roe_elem:
+                roe_value = roe_elem.find_next('td')
+                if roe_value:
+                    info['roe'] = roe_value.text.strip().replace('%', '').strip()
 
             # 事業内容 - look for various possible containers
             # Try div with id containing "company" or "profile"

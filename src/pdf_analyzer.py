@@ -18,21 +18,63 @@ class PDFAnalyzer:
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     }
 
+    def _resolve_actual_pdf_url(self, url: str) -> str:
+        """
+        株探の開示ページURLから実際のPDF URLを取得
+
+        Args:
+            url: 株探の開示ページURL（例: https://kabutan.jp/disclosures/pdf/...）
+
+        Returns:
+            str: 実際のPDF URL
+        """
+        if url.lower().endswith('.pdf'):
+            return url
+
+        # 株探の開示ページの場合、ページ内のPDFリンクを探す
+        if 'kabutan.jp/disclosures/pdf/' in url:
+            try:
+                from bs4 import BeautifulSoup
+                response = requests.get(url, headers=self.HEADERS, timeout=15)
+                response.raise_for_status()
+
+                soup = BeautifulSoup(response.text, 'lxml')
+                # iframeまたはembedのsrcからPDFリンクを探す
+                for tag in soup.find_all(['iframe', 'embed', 'object']):
+                    src = tag.get('src', '') or tag.get('data', '')
+                    if src and ('.pdf' in src.lower() or 'tdnet-pdf' in src):
+                        logger.info(f"Found actual PDF URL: {src}")
+                        return src
+
+                # aタグからも探す
+                for a in soup.find_all('a', href=True):
+                    href = a['href']
+                    if '.pdf' in href.lower() and 'tdnet' in href.lower():
+                        logger.info(f"Found PDF link: {href}")
+                        return href
+
+            except Exception as e:
+                logger.warning(f"Could not resolve PDF URL from page: {e}")
+
+        return url
+
     def download_and_extract_pdf(self, pdf_url: str) -> Optional[str]:
         """
         PDFをダウンロードしてテキストを抽出
 
         Args:
-            pdf_url: PDFのURL
+            pdf_url: PDFのURL（株探の開示ページURLでも可）
 
         Returns:
             str: 抽出されたテキスト（最初の10ページまで）
         """
         try:
-            logger.info(f"Downloading PDF: {pdf_url}")
+            # 株探の開示ページURLの場合、実際のPDF URLを取得
+            actual_url = self._resolve_actual_pdf_url(pdf_url)
+            logger.info(f"Downloading PDF: {actual_url}")
 
             # PDFをダウンロード
-            response = requests.get(pdf_url, headers=self.HEADERS, timeout=30)
+            response = requests.get(actual_url, headers=self.HEADERS, timeout=30)
             response.raise_for_status()
 
             # メモリ上でPDFを開く

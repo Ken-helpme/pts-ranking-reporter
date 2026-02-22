@@ -1,5 +1,5 @@
 """
-PTS Ranking Dashboard - Flask Web Application
+PTS ランキング ダッシュボード - Flask ウェブアプリケーション
 モダンなデザインでPTSランキングを表示・管理
 """
 from flask import Flask, render_template, jsonify, request
@@ -17,12 +17,17 @@ from news_fetcher import NewsFetcher
 from stock_analyzer import StockAnalyzer
 from disclosure_fetcher import DisclosureFetcher
 from earnings_analyzer import EarningsAnalyzer
+from pdf_analyzer import PDFAnalyzer
+from stock_evaluator import StockEvaluator
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'pts-ranking-dashboard-secret-key'
 
 # Initialize database
 init_db()
+
+# Claude API Key
+ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
 
 @app.route('/')
 def index():
@@ -49,39 +54,37 @@ def get_latest():
 def fetch_new_data():
     """新しいPTSデータをスクレイピングして保存"""
     try:
-        # Scrape PTS ranking
+        api_key = os.getenv('ANTHROPIC_API_KEY')
+
+        # Initialize all components
         scraper = KabutanScraper()
-        analyzer = PTSAnalyzer(min_volume=100, top_n=20)  # フィルター緩和
+        analyzer = PTSAnalyzer(min_volume=100, top_n=20)
         news_fetcher = NewsFetcher(max_news=3)
+        stock_analyzer = StockAnalyzer()
+        disclosure_fetcher = DisclosureFetcher()
+        earnings_analyzer = EarningsAnalyzer(api_key=api_key)
+        pdf_analyzer = PDFAnalyzer()
+        stock_evaluator = StockEvaluator()
 
         stocks = scraper.fetch_pts_ranking()
 
         if not stocks:
             return jsonify({
                 'success': False,
-                'error': 'Failed to fetch PTS ranking'
+                'error': 'PTSランキングの取得に失敗しました'
             }), 500
 
         filtered_stocks = analyzer.filter_and_rank(stocks)
-
-        # Save to database with same timestamp
-        from datetime import datetime
         timestamp = datetime.now().isoformat()
         saved_count = 0
-
-        # Initialize analyzers
-        stock_analyzer = StockAnalyzer()
-        disclosure_fetcher = DisclosureFetcher()
-        earnings_analyzer = EarningsAnalyzer()  # Claude APIで決算を深掘り分析
 
         for stock in filtered_stocks:
             code = stock['code']
 
-            # 銘柄名を取得（空の場合のみ）
             if not stock.get('name'):
                 stock['name'] = scraper.fetch_stock_name(code)
 
-            # Fetch additional info
+            # ニュースと会社情報を取得
             news = news_fetcher.fetch_stock_news(code)
             company = news_fetcher.get_company_info(code) or {}
 
@@ -89,41 +92,46 @@ def fetch_new_data():
             disclosure_info = disclosure_fetcher.fetch_disclosure_info(code)
             earnings_detail = None
 
-            # 決算の場合は開示情報も分析に含める
+            # 決算発表がある場合はPDF分析 + Claude API分析
             if disclosure_info.get('has_earnings'):
-                # 決算情報をニュースリストに追加
-                earnings_impact = disclosure_fetcher.analyze_earnings_impact(disclosure_info)
-
-                # Claude APIで決算を深掘り分析
                 disclosure_title = disclosure_info['disclosures'][0]['title'] if disclosure_info['disclosures'] else disclosure_info['earnings_summary']
-                earnings_detail = earnings_analyzer.analyze_earnings_detail(
-                    disclosure_title,
-                    news,
-                    stock
-                )
+                pdf_url = disclosure_info['disclosures'][0].get('pdf_url') if disclosure_info['disclosures'] else None
 
-                # 決算情報をニュースの最初に追加
-                earnings_news = {
-                    'title': f"【決算】{disclosure_info['earnings_summary']}",
-                    'date': disclosure_info['disclosures'][0]['date'] if disclosure_info['disclosures'] else '',
-                    'url': disclosure_info['disclosures'][0]['url'] if disclosure_info['disclosures'] else '',
-                    'source': '開示情報'
-                }
+                # PDFがあればダウンロード＆テキスト抽出
+                pdf_text = None
+                if pdf_url:
+                    pdf_text = pdf_analyzer.download_and_extract_pdf(pdf_url)
 
-                # Claude分析結果を追加
+                # Claude APIで分析（PDFがあれば全文、なければタイトルのみ）
+                if pdf_text and api_key:
+                    earnings_detail = earnings_analyzer.analyze_with_pdf_text(pdf_text, stock)
+                else:
+                    earnings_detail = earnings_analyzer.analyze_earnings_detail(
+                        disclosure_title, news, stock
+                    )
+
+                # 決算ニュースをリストの先頭に追加
                 if earnings_detail and earnings_detail.get('earnings_reason'):
-                    earnings_news['title'] += f" - {earnings_detail['earnings_reason']}"
+                    earnings_news = {
+                        'title': f"【決算】{disclosure_info['earnings_summary']} - {earnings_detail['earnings_reason'][:80]}",
+                        'date': disclosure_info['disclosures'][0]['date'] if disclosure_info['disclosures'] else '',
+                        'url': disclosure_info['disclosures'][0]['url'] if disclosure_info['disclosures'] else '',
+                        'source': '開示情報',
+                        'has_pdf_analysis': pdf_text is not None
+                    }
+                    news.insert(0, earnings_news)
 
-                news.insert(0, earnings_news)
-
-            # 上昇理由と将来性を分析
+            # 上昇理由を分析
             analysis = stock_analyzer.analyze_price_increase_reason(news, stock)
 
-            # 決算の詳細分析を追加
+            # 決算分析を追加
             if earnings_detail:
                 analysis['earnings_detail'] = earnings_detail
 
-            # Save to DB
+            # 総合評価を算出
+            evaluation = stock_evaluator.evaluate_stock(stock, company, analysis)
+            analysis['evaluation'] = evaluation
+
             save_pts_data(stock, news, company, timestamp, analysis)
             saved_count += 1
 
@@ -134,7 +142,7 @@ def fetch_new_data():
 
         return jsonify({
             'success': True,
-            'message': f'Successfully fetched and saved {saved_count} stocks',
+            'message': f'{saved_count}銘柄のデータを取得・保存しました',
             'count': saved_count
         })
 
@@ -150,52 +158,37 @@ def get_history():
     try:
         days = request.args.get('days', 7, type=int)
         code = request.args.get('code', None)
-
         data = get_historical_data(days=days, stock_code=code)
-
-        return jsonify({
-            'success': True,
-            'data': data
-        })
+        return jsonify({'success': True, 'data': data})
     except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/stats')
 def get_stats():
     """統計情報を取得"""
     try:
         stats = get_statistics()
-        return jsonify({
-            'success': True,
-            'data': stats
-        })
+        return jsonify({'success': True, 'data': stats})
     except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/stock/<code>')
 def get_stock_detail(code):
     """特定銘柄の詳細情報を取得"""
     try:
         data = get_historical_data(days=30, stock_code=code)
-        return jsonify({
-            'success': True,
-            'data': data
-        })
+        return jsonify({'success': True, 'data': data})
     except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 if __name__ == '__main__':
+    if ANTHROPIC_API_KEY:
+        print("✅ Claude API Key: 設定済み")
+    else:
+        print("⚠️  Claude API Key: 未設定（環境変数 ANTHROPIC_API_KEY を設定してください）")
+
     print("=" * 60)
-    print("🚀 PTS Ranking Dashboard Starting...")
+    print("🚀 PTSランキング ダッシュボード 起動中...")
     print("=" * 60)
     print("\n📊 Dashboard URL: http://localhost:5001")
     print("💡 Press Ctrl+C to stop\n")

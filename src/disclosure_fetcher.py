@@ -136,10 +136,14 @@ class DisclosureFetcher:
                     time_elem = time_td.find('time')
                     date = time_elem.get_text(strip=True) if time_elem else ""
 
+                    # PDFかどうかを判定
+                    is_pdf = '/disclosures/pdf/' in url or url.endswith('.pdf')
+
                     disclosures.append({
                         'title': title,
                         'date': date,
                         'url': url,
+                        'pdf_url': url if is_pdf else None,  # PDFの場合のみURLを設定
                         'type': 'earnings' if any(kw in title for kw in self.EARNINGS_KEYWORDS) else 'other'
                     })
 
