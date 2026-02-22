@@ -106,7 +106,7 @@ function displayRankingTable(data) {
             <td><span class="rank-badge">${index + 1}</span></td>
             <td>${ratingBadge}</td>
             <td><span class="stock-code">${stock.code}</span></td>
-            <td><strong>${stock.name}</strong></td>
+            <td><a href="https://kabutan.jp/stock/?code=${stock.code}" target="_blank" rel="noopener" style="color: inherit; text-decoration: none; font-weight: bold;">${stock.name}</a></td>
             <td>¥${formatNumber(stock.pts_price)}</td>
             <td class="${changeClass}">${changeSign}${stock.change_rate.toFixed(2)}%</td>
             <td><span style="font-size: 12px;">${per}</span></td>
