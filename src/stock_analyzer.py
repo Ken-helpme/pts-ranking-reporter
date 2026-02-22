@@ -2,15 +2,24 @@
 株式の上昇理由と将来性を分析するモジュール
 """
 import re
+import os
+import json
 from typing import List, Dict, Optional
 import logging
+import requests
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 class StockAnalyzer:
-    """株式の上昇理由と将来性を分析するクラス"""
+    """株式の上昇理由と将来性を分析するクラス（キーワード + LLM分析）"""
+
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_key = api_key or os.getenv('ANTHROPIC_API_KEY')
+        if not self.api_key:
+            logger.warning("ANTHROPIC_API_KEY 未設定。LLM分析なしでキーワード分析のみ使用します。")
+        self.api_url = "https://api.anthropic.com/v1/messages"
 
     # 上昇理由のキーワード
     CATALYST_KEYWORDS = {
@@ -67,8 +76,13 @@ class StockAnalyzer:
         # カタリストを抽出
         catalysts = self._extract_catalysts(news_list)
 
-        # メイン理由を一段落にまとめる
-        main_reason = self._consolidate_reasons(news_list, catalysts, stock_info)
+        # LLM分析を試行、失敗時はキーワード分析にフォールバック
+        main_reason = None
+        if self.api_key:
+            main_reason = self._analyze_with_llm(news_list, stock_info)
+
+        if not main_reason:
+            main_reason = self._consolidate_reasons(news_list, catalysts, stock_info)
 
         # センチメント分析
         sentiment = self._analyze_sentiment(news_list)
@@ -82,6 +96,64 @@ class StockAnalyzer:
             'sentiment': sentiment,
             'future_potential': future_potential,
         }
+
+    def _analyze_with_llm(self, news_list: List[Dict[str, str]], stock_info: Dict) -> Optional[str]:
+        """Claude APIを使って上昇理由を分析"""
+        try:
+            stock_name = stock_info.get('name', '不明')
+            stock_code = stock_info.get('code', '')
+            change_rate = stock_info.get('change_rate', 0)
+
+            # ニュースヘッドラインをまとめる
+            headlines = []
+            for news in news_list[:8]:
+                title = news.get('title', '')
+                date = news.get('date', '')
+                if title:
+                    headlines.append(f"- {date} {title}")
+
+            news_text = '\n'.join(headlines)
+
+            prompt = f"""以下は{stock_name}（{stock_code}）のPTS（私設取引）で前日比{change_rate:+.1f}%上昇した銘柄の最新ニュースです。
+
+ニュース:
+{news_text}
+
+この銘柄がPTSで大幅上昇した最も重要な理由を1〜2文で簡潔に説明してください。
+注意:
+- 当日のIR・適時開示（大量保有報告、業務提携、新製品発表等）が最も重要です
+- 決算は他に材料がない場合のみ理由としてください
+- 「〇〇が材料視された」のように具体的に書いてください
+- 推測ではなく、ニュースに基づいた事実を書いてください"""
+
+            headers = {
+                'x-api-key': self.api_key,
+                'anthropic-version': '2023-06-01',
+                'content-type': 'application/json',
+            }
+
+            data = {
+                'model': 'claude-sonnet-4-20250514',
+                'max_tokens': 200,
+                'messages': [
+                    {'role': 'user', 'content': prompt}
+                ]
+            }
+
+            response = requests.post(self.api_url, headers=headers, json=data, timeout=30)
+            response.raise_for_status()
+
+            result = response.json()
+            content = result.get('content', [{}])[0].get('text', '').strip()
+
+            if content:
+                logger.info(f"LLM分析成功: {stock_code} {stock_name}")
+                return content
+
+        except Exception as e:
+            logger.warning(f"LLM分析失敗（キーワード分析にフォールバック）: {e}")
+
+        return None
 
     def _extract_catalysts(self, news_list: List[Dict[str, str]]) -> Dict[str, List[str]]:
         """ニュースからカタリストを抽出"""
