@@ -1,0 +1,389 @@
+/* 話題株ピックアップ - スタイル */
+
+/* Navigation */
+.header-nav {
+    display: flex;
+    gap: 4px;
+}
+
+.nav-link {
+    padding: 8px 16px;
+    border-radius: 6px;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-light);
+    transition: all 0.2s ease;
+}
+
+.nav-link:hover {
+    background: var(--primary-light);
+    color: var(--primary-color);
+}
+
+.nav-link.active {
+    background: var(--primary-color);
+    color: white;
+}
+
+/* Date Select */
+.date-select {
+    padding: 8px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 14px;
+    font-family: inherit;
+    background: white;
+    color: var(--text-color);
+    cursor: pointer;
+}
+
+/* Market Summary Bar */
+.market-bar {
+    background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+    padding: 12px 0;
+    border-bottom: 2px solid #f59e0b;
+}
+
+.market-info {
+    display: flex;
+    gap: 32px;
+    align-items: center;
+}
+
+.market-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.market-label {
+    font-size: 12px;
+    color: #94a3b8;
+    font-weight: 500;
+}
+
+.market-value {
+    font-size: 15px;
+    font-weight: 700;
+    color: #f8fafc;
+}
+
+/* Empty State */
+.empty-state {
+    text-align: center;
+    padding: 80px 20px;
+}
+
+.empty-icon {
+    font-size: 64px;
+    margin-bottom: 16px;
+}
+
+.empty-state h3 {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: var(--text-color);
+}
+
+.empty-state p {
+    color: var(--text-light);
+    margin-bottom: 24px;
+}
+
+/* Trending Table */
+.trending-table-wrapper {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.trending-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.trending-table thead {
+    background: linear-gradient(135deg, #1e40af 0%, #2563eb 100%);
+}
+
+.trending-table thead th {
+    padding: 14px 12px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 13px;
+    color: white;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+}
+
+.trending-table thead th.col-rank {
+    width: 50px;
+    text-align: center;
+}
+
+.trending-table thead th.col-stock {
+    width: 160px;
+}
+
+.trending-table thead th.col-cap {
+    width: 90px;
+}
+
+.trending-table thead th.col-synopsis {
+    min-width: 250px;
+}
+
+.trending-table thead th.col-price {
+    width: 140px;
+}
+
+.trending-table thead th.col-metrics {
+    width: 100px;
+}
+
+.trending-table thead th.col-chart {
+    width: 180px;
+    text-align: center;
+}
+
+/* Table Rows */
+.trending-row {
+    border-bottom: 1px solid var(--border-color);
+    transition: background 0.15s ease;
+}
+
+.trending-row:hover {
+    background: #f0f7ff;
+}
+
+.trending-row:nth-child(even) {
+    background: #fafbfc;
+}
+
+.trending-row:nth-child(even):hover {
+    background: #f0f7ff;
+}
+
+.trending-row td {
+    padding: 14px 12px;
+    font-size: 13px;
+    vertical-align: top;
+    line-height: 1.5;
+}
+
+/* Rank */
+.rank-number {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    font-weight: 700;
+    font-size: 14px;
+    background: #e2e8f0;
+    color: #475569;
+}
+
+.rank-number.rank-top {
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    color: white;
+    box-shadow: 0 2px 4px rgba(245, 158, 11, 0.3);
+}
+
+/* Stock Info */
+.stock-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.stock-name-link {
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--text-color);
+    text-decoration: none;
+    transition: color 0.15s ease;
+}
+
+.stock-name-link:hover {
+    color: var(--primary-color);
+    text-decoration: underline;
+}
+
+.stock-meta {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.stock-code {
+    font-family: 'Monaco', 'Menlo', monospace;
+    font-size: 12px;
+    color: var(--primary-color);
+    font-weight: 600;
+}
+
+.stock-market {
+    font-size: 11px;
+    color: var(--text-light);
+    background: #f1f5f9;
+    padding: 1px 6px;
+    border-radius: 3px;
+}
+
+/* Market Cap */
+.market-cap-value {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+/* Synopsis */
+.synopsis-text {
+    font-size: 12.5px;
+    line-height: 1.7;
+    color: #374151;
+    max-height: 120px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.synopsis-text::-webkit-scrollbar {
+    width: 4px;
+}
+
+.synopsis-text::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 2px;
+}
+
+/* Price Grid */
+.price-grid {
+    display: grid;
+    gap: 4px;
+}
+
+.price-current {
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.price-unit {
+    font-size: 11px;
+    font-weight: 400;
+    opacity: 0.7;
+}
+
+.price-change {
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.price-range {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    font-size: 11px;
+}
+
+.price-label {
+    color: var(--text-light);
+    font-weight: 500;
+    min-width: 16px;
+}
+
+.price-val {
+    color: var(--text-color);
+    font-weight: 600;
+    font-family: 'Monaco', 'Menlo', monospace;
+    font-size: 11px;
+}
+
+/* Metrics */
+.metrics-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.metric-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+}
+
+.metric-label {
+    font-size: 11px;
+    color: var(--text-light);
+    font-weight: 500;
+}
+
+.metric-value {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-color);
+    font-family: 'Monaco', 'Menlo', monospace;
+}
+
+.metric-small {
+    font-size: 11px;
+}
+
+/* Mini Chart */
+.mini-chart-container {
+    width: 160px;
+    height: 80px;
+    margin: 0 auto;
+}
+
+/* Change Colors */
+.change-positive {
+    color: #16a34a;
+}
+
+.change-negative {
+    color: #dc2626;
+}
+
+/* Responsive */
+@media (max-width: 1200px) {
+    .trending-table-wrapper {
+        overflow-x: auto;
+    }
+
+    .trending-table {
+        min-width: 900px;
+    }
+}
+
+@media (max-width: 768px) {
+    .header-content {
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+
+    .header-nav {
+        order: 3;
+        width: 100%;
+    }
+
+    .market-info {
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+
+    .trending-table {
+        min-width: 800px;
+    }
+
+    .synopsis-text {
+        max-height: 80px;
+    }
+}

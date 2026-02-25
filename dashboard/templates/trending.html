@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>話題株ピックアップ | PTSランキング</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap"
+        rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/trending.css') }}">
+</head>
+
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">
+                    <span class="logo-icon">🔥</span>
+                    <h1>話題株ピックアップ</h1>
+                </div>
+                <nav class="header-nav">
+                    <a href="/" class="nav-link">📈 PTSランキング</a>
+                    <a href="/trending" class="nav-link active">🔥 話題株</a>
+                </nav>
+                <div class="header-actions">
+                    <select id="dateSelector" class="date-select" onchange="loadTrendingByDate()">
+                        <option value="">最新</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="fetchTrendingData()" id="fetchBtn">
+                        <span class="btn-icon">🔄</span>
+                        データ取得
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Market Summary Bar -->
+    <div class="market-bar">
+        <div class="container">
+            <div class="market-info" id="marketInfo">
+                <div class="market-item">
+                    <span class="market-label">日経平均</span>
+                    <span class="market-value" id="nikkeiValue">--</span>
+                </div>
+                <div class="market-item">
+                    <span class="market-label">取得日</span>
+                    <span class="market-value" id="fetchDate">--</span>
+                </div>
+                <div class="market-item">
+                    <span class="market-label">話題株数</span>
+                    <span class="market-value" id="stockCount">--</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="container">
+            <!-- Loading -->
+            <div id="loadingIndicator" class="loading">
+                <div class="spinner"></div>
+                <p>データを読み込み中...</p>
+            </div>
+
+            <!-- Empty State -->
+            <div id="emptyState" class="empty-state" style="display: none;">
+                <div class="empty-icon">📊</div>
+                <h3>話題株データがありません</h3>
+                <p>「データ取得」ボタンをクリックして最新の話題株情報を取得してください。</p>
+                <button class="btn btn-primary" onclick="fetchTrendingData()">
+                    <span class="btn-icon">🔄</span>
+                    データ取得
+                </button>
+            </div>
+
+            <!-- Trending Stocks Table -->
+            <div id="trendingTable" class="trending-table-wrapper" style="display: none;">
+                <table class="trending-table">
+                    <thead>
+                        <tr>
+                            <th class="col-rank">#</th>
+                            <th class="col-stock">銘柄</th>
+                            <th class="col-cap">時価総額</th>
+                            <th class="col-synopsis">あらすじ</th>
+                            <th class="col-price">株価</th>
+                            <th class="col-metrics">指標</th>
+                            <th class="col-chart">チャート</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trendingTableBody">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast"></div>
+
+    <!-- Scripts -->
+    <script src="{{ url_for('static', filename='js/trending.js') }}"></script>
+</body>
+
+</html>

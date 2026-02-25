@@ -10,7 +10,8 @@ import os
 # Add parent directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from models import init_db, save_pts_data, get_latest_ranking, get_historical_data, get_statistics
+from models import init_db, save_pts_data, get_latest_ranking, get_historical_data, get_statistics, save_trending_stocks, get_trending_stocks, get_trending_dates
+from trending_stock_fetcher import TrendingStockFetcher
 from scraper import KabutanScraper
 from analyzer import PTSAnalyzer
 from news_fetcher import NewsFetcher
@@ -178,6 +179,67 @@ def get_stock_detail(code):
     try:
         data = get_historical_data(days=30, stock_code=code)
         return jsonify({'success': True, 'data': data})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# ========== 話題株ピックアップ ==========
+
+@app.route('/trending')
+def trending():
+    """話題株ピックアップページ"""
+    return render_template('trending.html')
+
+@app.route('/api/trending/latest')
+def get_trending_latest():
+    """最新の話題株データを取得"""
+    try:
+        date = request.args.get('date', None)
+        data = get_trending_stocks(date=date)
+        return jsonify({
+            'success': True,
+            'data': data,
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/trending/fetch')
+def fetch_trending_data():
+    """話題株データを新規取得・保存"""
+    try:
+        fetcher = TrendingStockFetcher()
+        try:
+            stocks = fetcher.fetch_trending_stocks()
+            if not stocks:
+                return jsonify({
+                    'success': False,
+                    'error': '話題株データの取得に失敗しました'
+                }), 500
+
+            # 保存
+            fetch_date = datetime.now().strftime('%Y-%m-%d')
+            save_trending_stocks(stocks, fetch_date)
+
+            return jsonify({
+                'success': True,
+                'message': f'{len(stocks)}銘柄の話題株データを取得・保存しました',
+                'count': len(stocks)
+            })
+        finally:
+            fetcher.close()
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/trending/dates')
+def get_trending_date_list():
+    """話題株データがある日付リストを取得"""
+    try:
+        dates = get_trending_dates()
+        return jsonify({'success': True, 'dates': dates})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

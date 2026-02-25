@@ -59,8 +59,150 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_created_at ON pts_ranking(created_at)
     ''')
 
+    # Trending stocks table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS trending_stocks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            stock_code TEXT NOT NULL,
+            stock_name TEXT NOT NULL,
+            price REAL,
+            change_rate REAL,
+            change_amount REAL,
+            price_high REAL,
+            price_low REAL,
+            price_open REAL,
+            volume TEXT,
+            market TEXT,
+            market_cap TEXT,
+            per REAL,
+            pbr REAL,
+            synopsis TEXT,
+            source_url TEXT,
+            chart_data TEXT,
+            fetch_date TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_trending_fetch_date ON trending_stocks(fetch_date)
+    ''')
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_trending_code ON trending_stocks(stock_code)
+    ''')
+
     conn.commit()
     conn.close()
+
+def save_trending_stocks(stocks: List[Dict], fetch_date: str = None):
+    """話題株データを保存"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    if fetch_date is None:
+        fetch_date = datetime.now().strftime('%Y-%m-%d')
+
+    # 同じ日付の既存データを削除（更新扱い）
+    cursor.execute('DELETE FROM trending_stocks WHERE fetch_date = ?', (fetch_date,))
+
+    for stock in stocks:
+        chart_json = json.dumps(stock.get('chart_data', []), ensure_ascii=False)
+        cursor.execute('''
+            INSERT INTO trending_stocks
+            (stock_code, stock_name, price, change_rate, change_amount,
+             price_high, price_low, price_open, volume, market, market_cap,
+             per, pbr, synopsis, source_url, chart_data, fetch_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            stock['code'],
+            stock['name'],
+            stock.get('price'),
+            stock.get('change_rate'),
+            stock.get('change_amount'),
+            stock.get('price_high'),
+            stock.get('price_low'),
+            stock.get('price_open'),
+            stock.get('volume', ''),
+            stock.get('market', ''),
+            stock.get('market_cap', ''),
+            stock.get('per'),
+            stock.get('pbr'),
+            stock.get('synopsis', ''),
+            stock.get('source_url', ''),
+            chart_json,
+            fetch_date
+        ))
+
+    conn.commit()
+    conn.close()
+
+def get_trending_stocks(date: Optional[str] = None) -> List[Dict]:
+    """話題株データを取得"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    if date:
+        cursor.execute('''
+            SELECT stock_code, stock_name, price, change_rate, change_amount,
+                   price_high, price_low, price_open, volume, market, market_cap,
+                   per, pbr, synopsis, source_url, chart_data, fetch_date, created_at
+            FROM trending_stocks
+            WHERE fetch_date = ?
+            ORDER BY id ASC
+        ''', (date,))
+    else:
+        # 最新日付のデータを取得
+        cursor.execute('SELECT MAX(fetch_date) FROM trending_stocks')
+        latest_date = cursor.fetchone()[0]
+        if not latest_date:
+            conn.close()
+            return []
+        cursor.execute('''
+            SELECT stock_code, stock_name, price, change_rate, change_amount,
+                   price_high, price_low, price_open, volume, market, market_cap,
+                   per, pbr, synopsis, source_url, chart_data, fetch_date, created_at
+            FROM trending_stocks
+            WHERE fetch_date = ?
+            ORDER BY id ASC
+        ''', (latest_date,))
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    result = []
+    for row in rows:
+        result.append({
+            'code': row[0],
+            'name': row[1],
+            'price': row[2],
+            'change_rate': row[3],
+            'change_amount': row[4],
+            'price_high': row[5],
+            'price_low': row[6],
+            'price_open': row[7],
+            'volume': row[8] or '',
+            'market': row[9] or '',
+            'market_cap': row[10] or '',
+            'per': row[11],
+            'pbr': row[12],
+            'synopsis': row[13] or '',
+            'source_url': row[14] or '',
+            'chart_data': json.loads(row[15]) if row[15] else [],
+            'fetch_date': row[16],
+            'timestamp': row[17],
+        })
+
+    return result
+
+def get_trending_dates() -> List[str]:
+    """話題株データがある日付リストを取得"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('SELECT DISTINCT fetch_date FROM trending_stocks ORDER BY fetch_date DESC LIMIT 30')
+    dates = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return dates
 
 def save_pts_data(stock: Dict, news: List[Dict], company: Dict, timestamp: str = None,
                  analysis: Dict = None):
