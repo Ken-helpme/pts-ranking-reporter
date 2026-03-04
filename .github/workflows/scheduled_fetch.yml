@@ -1,0 +1,65 @@
+name: Scheduled PTS & Trending Data Fetch
+
+on:
+  schedule:
+    # 毎日 17:30 JST (= 08:30 UTC)
+    - cron: '30 8 * * 1-5'
+  workflow_dispatch:  # 手動実行も可能
+
+env:
+  PROJECT_ID: son-app-project
+  REGION: asia-northeast1
+  SERVICE: pts-ranking-reporter
+
+jobs:
+  fetch-data:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Get Cloud Run URL
+        id: get-url
+        run: |
+          URL=$(gcloud run services describe ${{ env.SERVICE }} \
+            --region=${{ env.REGION }} \
+            --project=${{ env.PROJECT_ID }} \
+            --format='value(status.url)')
+          echo "service_url=$URL" >> $GITHUB_OUTPUT
+          echo "Cloud Run URL: $URL"
+
+      - name: Fetch PTS Ranking Data
+        run: |
+          echo "🚀 PTSランキングデータ取得開始..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            --max-time 120 \
+            "${{ steps.get-url.outputs.service_url }}/api/fetch")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          echo "Response ($HTTP_CODE): $BODY"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ PTS取得失敗 (HTTP $HTTP_CODE)"
+            exit 1
+          fi
+          echo "✅ PTS取得完了"
+
+      - name: Fetch Trending Stocks Data
+        run: |
+          echo "🔥 話題株データ取得開始..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            --max-time 120 \
+            "${{ steps.get-url.outputs.service_url }}/api/trending/fetch")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          echo "Response ($HTTP_CODE): $BODY"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "⚠️ 話題株取得失敗 (HTTP $HTTP_CODE)"
+          else
+            echo "✅ 話題株取得完了"
+          fi
