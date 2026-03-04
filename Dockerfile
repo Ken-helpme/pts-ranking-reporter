@@ -16,5 +16,5 @@ EXPOSE 8080
 # Set PYTHONPATH so gunicorn can find src/ modules after cd dashboard
 ENV PYTHONPATH=/app/src
 
-# Run with gunicorn
-CMD cd dashboard && gunicorn app:app --bind 0.0.0.0:8080 --workers 2 --timeout 120
+# Run with gunicorn - use PORT env var (Cloud Run sets this)
+CMD cd dashboard && gunicorn app:app --bind 0.0.0.0:${PORT:-8080} --workers 2 --timeout 300
