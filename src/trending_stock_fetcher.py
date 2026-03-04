@@ -27,7 +27,7 @@ class TrendingStockFetcher:
         'Accept-Language': 'ja,en-US;q=0.7,en;q=0.3',
     }
 
-    def __init__(self, request_delay: float = 1.5):
+    def __init__(self, request_delay: float = 0.8):
         self.session = requests.Session()
         self.session.headers.update(self.HEADERS)
         self.request_delay = request_delay
@@ -69,9 +69,20 @@ class TrendingStockFetcher:
             stocks = self._parse_trending_article(url)
             all_stocks.extend(stocks)
 
-        # 3. 各銘柄に株価・チャートデータを追加
+        # 3. 銘柄コードで重複除去（最初に登場した方を保持）
+        seen_codes = set()
+        unique_stocks = []
         for stock in all_stocks:
+            if stock['code'] not in seen_codes:
+                seen_codes.add(stock['code'])
+                unique_stocks.append(stock)
+        logger.info(f"重複除去: {len(all_stocks)} → {len(unique_stocks)} 銘柄")
+        all_stocks = unique_stocks
+
+        # 4. 各銘柄に株価・チャートデータを追加
+        for i, stock in enumerate(all_stocks):
             time.sleep(self.request_delay)
+            logger.info(f"  [{i+1}/{len(all_stocks)}] {stock['name']} のデータ取得中...")
             self._enrich_stock_data(stock)
 
         logger.info(f"合計 {len(all_stocks)} 銘柄の話題株情報を取得")
@@ -80,6 +91,7 @@ class TrendingStockFetcher:
     def _find_trending_articles(self, date: str) -> List[str]:
         """日付指定で話題株ピックアップ記事のURLリストを取得"""
         urls = []
+        seen_ids = set()  # 記事IDで重複防止
         try:
             # ニュースインデックス（注目カテゴリ）から検索
             response = self.session.get(
@@ -99,13 +111,18 @@ class TrendingStockFetcher:
                         href = self.KABUTAN_BASE_URL + href
                     elif not href.startswith('http'):
                         href = self.KABUTAN_BASE_URL + '/' + href
-                    if href not in urls:
+                    # 記事IDで重複チェック（URLの b=nXXX 部分）
+                    article_id = re.search(r'b=([a-zA-Z0-9]+)', href)
+                    aid = article_id.group(1) if article_id else href
+                    if aid not in seen_ids:
+                        seen_ids.add(aid)
+                        # URL正規化: ?&b= → ?b=
+                        href = href.replace('?&b=', '?b=')
                         urls.append(href)
                         logger.info(f"記事発見: {title} -> {href}")
 
             # 日付ベースの直接URL試行（バックアップ）
             if not urls:
-                # 夕刊パターン
                 for suffix in ['t', 't_top_1', 't_top_2', 't_top_3']:
                     test_url = f"{self.NEWS_INDEX_URL}?b=k{date}{suffix}"
                     try:
