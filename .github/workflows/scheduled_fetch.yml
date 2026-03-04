@@ -2,9 +2,21 @@ name: Scheduled PTS & Trending Data Fetch
 
 on:
   schedule:
-    # 毎日 17:30 JST (= 08:30 UTC)
+    # 話題株: 毎日 16:00 JST (= 07:00 UTC)
+    - cron: '0 7 * * 1-5'
+    # PTS: 毎日 17:30 JST (= 08:30 UTC)
     - cron: '30 8 * * 1-5'
-  workflow_dispatch:  # 手動実行も可能
+  workflow_dispatch:
+    inputs:
+      target:
+        description: '取得対象'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - pts
+          - trending
 
 env:
   PROJECT_ID: son-app-project
@@ -34,11 +46,49 @@ jobs:
           echo "service_url=$URL" >> $GITHUB_OUTPUT
           echo "Cloud Run URL: $URL"
 
-      - name: Fetch PTS Ranking Data
+      - name: Determine what to fetch
+        id: target
+        run: |
+          # 手動実行の場合はinputを使用
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "target=${{ github.event.inputs.target }}" >> $GITHUB_OUTPUT
+          else
+            # cron実行: 時刻で判定 (UTC)
+            HOUR=$(date -u +%H)
+            MINUTE=$(date -u +%M)
+            echo "Current UTC time: ${HOUR}:${MINUTE}"
+            if [ "$HOUR" = "07" ]; then
+              echo "target=trending" >> $GITHUB_OUTPUT
+            elif [ "$HOUR" = "08" ]; then
+              echo "target=pts" >> $GITHUB_OUTPUT
+            else
+              echo "target=both" >> $GITHUB_OUTPUT
+            fi
+          fi
+          echo "Fetch target: $(cat $GITHUB_OUTPUT | grep target | cut -d= -f2)"
+
+      - name: Fetch Trending Stocks Data (16:00 JST)
+        if: steps.target.outputs.target == 'trending' || steps.target.outputs.target == 'both'
+        run: |
+          echo "🔥 話題株データ取得開始..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            --max-time 300 \
+            "${{ steps.get-url.outputs.service_url }}/api/trending/fetch")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          echo "Response ($HTTP_CODE): $BODY"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ 話題株取得失敗 (HTTP $HTTP_CODE)"
+            exit 1
+          fi
+          echo "✅ 話題株取得完了"
+
+      - name: Fetch PTS Ranking Data (17:30 JST)
+        if: steps.target.outputs.target == 'pts' || steps.target.outputs.target == 'both'
         run: |
           echo "🚀 PTSランキングデータ取得開始..."
           RESPONSE=$(curl -s -w "\n%{http_code}" \
-            --max-time 120 \
+            --max-time 300 \
             "${{ steps.get-url.outputs.service_url }}/api/fetch")
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | head -n -1)
@@ -48,18 +98,3 @@ jobs:
             exit 1
           fi
           echo "✅ PTS取得完了"
-
-      - name: Fetch Trending Stocks Data
-        run: |
-          echo "🔥 話題株データ取得開始..."
-          RESPONSE=$(curl -s -w "\n%{http_code}" \
-            --max-time 120 \
-            "${{ steps.get-url.outputs.service_url }}/api/trending/fetch")
-          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-          BODY=$(echo "$RESPONSE" | head -n -1)
-          echo "Response ($HTTP_CODE): $BODY"
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "⚠️ 話題株取得失敗 (HTTP $HTTP_CODE)"
-          else
-            echo "✅ 話題株取得完了"
-          fi
