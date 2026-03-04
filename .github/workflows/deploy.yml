@@ -44,5 +44,5 @@ jobs:
             --allow-unauthenticated \
             --memory=512Mi \
             --timeout=300 \
-            --set-env-vars="PYTHONPATH=./src,ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }},JQUANTS_API_KEY=${{ secrets.JQUANTS_API_KEY }}" \
+            --set-env-vars="PYTHONPATH=/app/src,ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }},JQUANTS_API_KEY=${{ secrets.JQUANTS_API_KEY }}" \
             --quiet
