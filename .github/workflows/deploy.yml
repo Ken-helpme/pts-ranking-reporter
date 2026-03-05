@@ -55,6 +55,8 @@ jobs:
             --project=${{ env.PROJECT_ID }} \
             --format='value(status.url)')
           echo "Service URL: $URL"
+          echo "## Cloud Run Health Check" >> $GITHUB_STEP_SUMMARY
+          echo "**Service URL:** $URL" >> $GITHUB_STEP_SUMMARY
 
           # Wait for the service to start
           sleep 20
@@ -62,6 +64,7 @@ jobs:
           # Test the service
           HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" --max-time 60 "$URL/")
           echo "Health check response: HTTP $HTTP_CODE"
+          echo "**Health Check:** HTTP $HTTP_CODE" >> $GITHUB_STEP_SUMMARY
           echo "Response body:"
           cat /tmp/response.txt | head -20
 
