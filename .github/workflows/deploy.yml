@@ -48,6 +48,7 @@ jobs:
             --quiet
 
       - name: Health check and debug
+        if: always()
         run: |
           URL=$(gcloud run services describe ${{ env.SERVICE }} \
             --region=${{ env.REGION }} \
@@ -56,26 +57,41 @@ jobs:
           echo "Service URL: $URL"
 
           # Wait for the service to start
-          sleep 15
+          sleep 20
 
           # Test the service
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$URL/")
+          HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" --max-time 60 "$URL/")
           echo "Health check response: HTTP $HTTP_CODE"
+          echo "Response body:"
+          cat /tmp/response.txt | head -20
+
+          echo ""
+          echo "=== Cloud Run Logs ==="
+          gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=${{ env.SERVICE }}" \
+            --project=${{ env.PROJECT_ID }} \
+            --limit=100 \
+            --format='value(textPayload,jsonPayload.message)' \
+            --freshness=10m 2>/dev/null | tee /tmp/cloudrun_logs.txt || echo "Could not fetch logs"
+
+          echo ""
+          echo "=== Revision Status ==="
+          gcloud run revisions list \
+            --service=${{ env.SERVICE }} \
+            --region=${{ env.REGION }} \
+            --project=${{ env.PROJECT_ID }} \
+            --limit=5 2>/dev/null || echo "Could not list revisions"
 
           if [ "$HTTP_CODE" != "200" ]; then
-            echo "⚠️ Service returned HTTP $HTTP_CODE, checking logs..."
-            gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=${{ env.SERVICE }}" \
-              --project=${{ env.PROJECT_ID }} \
-              --limit=50 \
-              --format='value(textPayload)' \
-              --freshness=5m 2>/dev/null || echo "Could not fetch logs"
-            
-            echo "--- Revision details ---"
-            gcloud run revisions list \
-              --service=${{ env.SERVICE }} \
-              --region=${{ env.REGION }} \
-              --project=${{ env.PROJECT_ID }} \
-              --limit=3 2>/dev/null || echo "Could not list revisions"
+            echo "❌ Service is NOT healthy (HTTP $HTTP_CODE)"
+            exit 1
           else
             echo "✅ Service is healthy!"
           fi
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudrun-logs
+          path: /tmp/cloudrun_logs.txt
+          if-no-files-found: ignore
