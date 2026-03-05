@@ -9,12 +9,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY src/ ./src/
 COPY dashboard/ ./dashboard/
+COPY entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
 
 # Expose port
 EXPOSE 8080
 
-# Set PYTHONPATH so gunicorn can find src/ modules after cd dashboard
+# Set PYTHONPATH so gunicorn can find src/ modules
 ENV PYTHONPATH=/app/src
 
-# Run with gunicorn - use PORT env var (Cloud Run sets this)
-CMD cd dashboard && gunicorn app:app --bind 0.0.0.0:${PORT:-8080} --workers 2 --timeout 300
+# Run entrypoint script
+CMD ["./entrypoint.sh"]
