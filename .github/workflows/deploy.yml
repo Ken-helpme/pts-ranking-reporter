@@ -46,3 +46,36 @@ jobs:
             --timeout=300 \
             --set-env-vars="PYTHONPATH=/app/src,ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }},JQUANTS_API_KEY=${{ secrets.JQUANTS_API_KEY }}" \
             --quiet
+
+      - name: Health check and debug
+        run: |
+          URL=$(gcloud run services describe ${{ env.SERVICE }} \
+            --region=${{ env.REGION }} \
+            --project=${{ env.PROJECT_ID }} \
+            --format='value(status.url)')
+          echo "Service URL: $URL"
+
+          # Wait for the service to start
+          sleep 15
+
+          # Test the service
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$URL/")
+          echo "Health check response: HTTP $HTTP_CODE"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "⚠️ Service returned HTTP $HTTP_CODE, checking logs..."
+            gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=${{ env.SERVICE }}" \
+              --project=${{ env.PROJECT_ID }} \
+              --limit=50 \
+              --format='value(textPayload)' \
+              --freshness=5m 2>/dev/null || echo "Could not fetch logs"
+            
+            echo "--- Revision details ---"
+            gcloud run revisions list \
+              --service=${{ env.SERVICE }} \
+              --region=${{ env.REGION }} \
+              --project=${{ env.PROJECT_ID }} \
+              --limit=3 2>/dev/null || echo "Could not list revisions"
+          else
+            echo "✅ Service is healthy!"
+          fi
