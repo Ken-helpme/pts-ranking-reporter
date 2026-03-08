@@ -138,6 +138,101 @@ async function fetchNewData() {
     }
 }
 
+// J-Quantsランキングを取得・表示
+async function fetchJQuantsRanking() {
+    showToast('📊 J-Quantsからデータ取得中...', 'info');
+
+    const loadingIndicator = document.getElementById('loadingIndicator');
+    const rankingTable = document.getElementById('rankingTable');
+
+    try {
+        loadingIndicator.style.display = 'block';
+        loadingIndicator.innerHTML = '<div class="spinner"></div><p>J-Quants APIからリアルタイムデータを取得中...</p>';
+        rankingTable.style.display = 'none';
+
+        const response = await fetch('/api/jquants/ranking?limit=30&sort=volume');
+        const result = await response.json();
+
+        if (result.success && result.data.length > 0) {
+            displayJQuantsTable(result.data);
+
+            // 統計情報を更新
+            const avgChange = result.data.reduce((sum, s) => sum + s.change_rate, 0) / result.data.length;
+            const maxChange = Math.max(...result.data.map(s => s.change_rate));
+            const totalVol = result.data.reduce((sum, s) => sum + s.volume, 0);
+
+            document.getElementById('avgChangeRate').textContent = avgChange.toFixed(2) + '%';
+            document.getElementById('maxChangeRate').textContent = maxChange.toFixed(2) + '%';
+            document.getElementById('totalVolume').textContent = formatNumber(totalVol);
+            document.getElementById('totalStocks').textContent = result.total;
+            document.getElementById('lastUpdated').textContent = new Date().toLocaleString('ja-JP');
+
+            loadingIndicator.style.display = 'none';
+            rankingTable.style.display = 'block';
+            showToast(`✅ ${result.total}銘柄のJ-Quantsデータを取得しました`, 'success');
+        } else {
+            loadingIndicator.innerHTML = '<p>データがありません。J-Quants APIキーを確認してください。</p>';
+            showToast('❌ データが取得できませんでした', 'error');
+        }
+    } catch (error) {
+        console.error('J-Quantsランキングエラー:', error);
+        loadingIndicator.innerHTML = '<p class="change-negative">J-Quantsデータの取得に失敗しました</p>';
+        showToast('❌ J-Quantsデータ取得に失敗しました', 'error');
+    }
+}
+
+// J-Quantsデータのテーブルを表示
+function displayJQuantsTable(data) {
+    const tbody = document.getElementById('rankingTableBody');
+    tbody.innerHTML = '';
+
+    data.forEach((stock, index) => {
+        const row = document.createElement('tr');
+
+        const changeClass = stock.change_rate >= 0 ? 'change-positive' : 'change-negative';
+        const changeSign = stock.change_rate >= 0 ? '+' : '';
+
+        // 市場バッジ
+        const marketColors = {
+            'プライム': '#2563eb',
+            'スタンダード': '#16a34a',
+            'グロース': '#d97706'
+        };
+        const marketColor = marketColors[stock.market] || '#9ca3af';
+        const marketBadge = stock.market ?
+            `<span style="background:${marketColor};color:#fff;padding:2px 6px;border-radius:4px;font-size:10px;">${stock.market}</span>` : '';
+
+        // 出来高フォーマット
+        let volStr = '-';
+        if (stock.volume >= 100000000) volStr = (stock.volume / 100000000).toFixed(1) + '億';
+        else if (stock.volume >= 10000) volStr = (stock.volume / 10000).toFixed(0) + '万';
+        else volStr = formatNumber(stock.volume);
+
+        // 売買代金フォーマット
+        let turnStr = '-';
+        if (stock.turnover >= 100000000) turnStr = (stock.turnover / 100000000).toFixed(0) + '億';
+        else if (stock.turnover >= 10000) turnStr = (stock.turnover / 10000).toFixed(0) + '万';
+
+        const code4 = stock.code.replace(/0$/, '');
+
+        row.innerHTML = `
+            <td><span class="rank-badge">${index + 1}</span></td>
+            <td>${marketBadge}</td>
+            <td><span class="stock-code">${code4}</span></td>
+            <td><a href="https://kabutan.jp/stock/?code=${code4}" target="_blank" rel="noopener" style="color: inherit; text-decoration: none; font-weight: bold;">${stock.name}</a></td>
+            <td>¥${formatNumber(stock.close)}</td>
+            <td class="${changeClass}">${changeSign}${stock.change_rate.toFixed(2)}%</td>
+            <td><span style="font-size: 12px;">${stock.sector || '-'}</span></td>
+            <td><span style="font-size: 12px;">-</span></td>
+            <td>${volStr}</td>
+            <td><span style="font-size: 12px; color: #555;">${turnStr}</span></td>
+            <td><button class="btn-detail" onclick="showStockDetail('${code4}', '${stock.name}')">詳細</button></td>
+        `;
+
+        tbody.appendChild(row);
+    });
+}
+
 // 銘柄詳細モーダルを表示
 async function showStockDetail(code, name) {
     const modal = document.getElementById('stockModal');

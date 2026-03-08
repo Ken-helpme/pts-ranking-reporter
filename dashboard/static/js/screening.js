@@ -65,6 +65,10 @@ async function runScreening() {
             document.getElementById('summaryTime').textContent = `⏱ ${elapsed}秒`;
             resultSummary.style.display = 'block';
             tableWrapper.style.display = 'block';
+            // 結果まで自動スクロール
+            setTimeout(() => {
+                resultSummary.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 100);
         } else {
             showToast(data.error || 'スクリーニングに失敗しました', 'error');
             emptyState.style.display = 'block';

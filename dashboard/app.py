@@ -247,6 +247,59 @@ def get_trending_date_list():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+# ========== J-Quants PTSランキング ==========
+
+@app.route('/api/jquants/ranking')
+def jquants_ranking():
+    """J-QuantsデータでPTSランキング（出来高上位）"""
+    try:
+        market = request.args.get('market', '')
+        sort_by = request.args.get('sort', 'volume')
+        limit = request.args.get('limit', 20, type=int)
+
+        filters = {
+            'market': market,
+            'volume_min': 100000,
+            'sort_by': sort_by,
+            'sort_desc': True,
+            'limit': limit,
+        }
+        results = jquants.screen_stocks(filters)
+
+        return jsonify({
+            'success': True,
+            'data': results,
+            'total': len(results),
+            'source': 'J-Quants API'
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/jquants/stock/<code>')
+def jquants_stock_detail(code):
+    """J-Quantsで個別銘柄の詳細データ取得"""
+    try:
+        # マスター情報
+        master = jquants.get_master(code + '0' if len(code) == 4 else code)
+        # 株価データ（直近30日）
+        from datetime import timedelta
+        to_date = datetime.now().strftime('%Y-%m-%d')
+        from_date = (datetime.now() - timedelta(days=40)).strftime('%Y-%m-%d')
+        prices = jquants.get_prices(code + '0' if len(code) == 4 else code, from_date, to_date)
+        # 決算サマリー
+        fins = jquants.get_financial_summary(code + '0' if len(code) == 4 else code)
+
+        return jsonify({
+            'success': True,
+            'master': master[0] if master else {},
+            'prices': prices[-10:] if prices else [],  # 直近10日分
+            'financials': fins[-2:] if fins else [],    # 直近2期分
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 # ========== 銘柄スクリーニング ==========
 
 @app.route('/screening')
