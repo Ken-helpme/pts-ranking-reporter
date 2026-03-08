@@ -20,6 +20,7 @@ from disclosure_fetcher import DisclosureFetcher
 from earnings_analyzer import EarningsAnalyzer
 from pdf_analyzer import PDFAnalyzer
 from stock_evaluator import StockEvaluator
+from jquants_client import JQuantsClient
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'pts-ranking-dashboard-secret-key'
@@ -29,6 +30,9 @@ init_db()
 
 # Claude API Key
 ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
+
+# J-Quants APIクライアント
+jquants = JQuantsClient()
 
 @app.route('/')
 def index():
@@ -242,6 +246,40 @@ def get_trending_date_list():
         return jsonify({'success': True, 'dates': dates})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+# ========== 銘柄スクリーニング ==========
+
+@app.route('/screening')
+def screening_page():
+    """銘柄スクリーニングページ"""
+    return render_template('screening.html')
+
+@app.route('/api/screening/sectors')
+def screening_sectors():
+    """業種一覧"""
+    try:
+        sectors = jquants.get_sectors()
+        return jsonify({'success': True, 'sectors': sectors})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/screening/search', methods=['POST'])
+def screening_search():
+    """スクリーニング実行"""
+    try:
+        filters = request.get_json() or {}
+        results = jquants.screen_stocks(filters)
+        date = results[0]['date'] if results else ''
+        return jsonify({
+            'success': True,
+            'results': results,
+            'total': len(results),
+            'date': date
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
 
 if __name__ == '__main__':
     if ANTHROPIC_API_KEY:

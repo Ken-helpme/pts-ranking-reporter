@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>銘柄スクリーニング | PTSランキング</title>
+    <meta name="description" content="J-Quants APIを使った日本株銘柄スクリーニング。市場区分、業種、株価、出来高、前日比でフィルタリング。">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/screening.css">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
+</head>
+
+<body>
+    <!-- ナビゲーション -->
+    <header class="nav-header">
+        <div class="nav-container">
+            <h1 class="nav-title">🔍 銘柄スクリーニング</h1>
+            <nav class="nav-links">
+                <a href="/" class="nav-link">📊 PTSランキング</a>
+                <a href="/trending" class="nav-link">🔥 話題株</a>
+                <a href="/screening" class="nav-link active">🔍 スクリーニング</a>
+            </nav>
+        </div>
+    </header>
+
+    <!-- フィルターパネル -->
+    <div class="filter-panel">
+        <div class="filter-container">
+            <div class="filter-row">
+                <div class="filter-group">
+                    <label>市場区分</label>
+                    <select id="marketFilter">
+                        <option value="">全市場</option>
+                        <option value="プライム">プライム</option>
+                        <option value="スタンダード">スタンダード</option>
+                        <option value="グロース">グロース</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>業種</label>
+                    <select id="sectorFilter">
+                        <option value="">全業種</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>株価（円）</label>
+                    <div class="range-inputs">
+                        <input type="number" id="priceMin" placeholder="下限" min="0">
+                        <span>〜</span>
+                        <input type="number" id="priceMax" placeholder="上限" min="0">
+                    </div>
+                </div>
+                <div class="filter-group">
+                    <label>出来高（株）</label>
+                    <div class="range-inputs">
+                        <input type="number" id="volumeMin" placeholder="最低" min="0">
+                    </div>
+                </div>
+            </div>
+            <div class="filter-row">
+                <div class="filter-group">
+                    <label>前日比（%）</label>
+                    <div class="range-inputs">
+                        <input type="number" id="changeMin" placeholder="下限" step="0.1">
+                        <span>〜</span>
+                        <input type="number" id="changeMax" placeholder="上限" step="0.1">
+                    </div>
+                </div>
+                <div class="filter-group">
+                    <label>並び替え</label>
+                    <select id="sortBy">
+                        <option value="volume">出来高（多い順）</option>
+                        <option value="turnover">売買代金（多い順）</option>
+                        <option value="change_rate_desc">前日比（高い順）</option>
+                        <option value="change_rate_asc">前日比（低い順）</option>
+                        <option value="close_desc">株価（高い順）</option>
+                        <option value="close_asc">株価（安い順）</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>表示件数</label>
+                    <select id="limitFilter">
+                        <option value="50">50件</option>
+                        <option value="100" selected>100件</option>
+                        <option value="200">200件</option>
+                        <option value="500">500件</option>
+                    </select>
+                </div>
+                <div class="filter-group filter-actions">
+                    <button id="searchBtn" class="btn-search" onclick="runScreening()">
+                        🔍 スクリーニング実行
+                    </button>
+                    <button id="resetBtn" class="btn-reset" onclick="resetFilters()">
+                        ↺ リセット
+                    </button>
+                </div>
+            </div>
+            <!-- プリセット -->
+            <div class="preset-row">
+                <span class="preset-label">プリセット:</span>
+                <button class="preset-btn" onclick="applyPreset('value')">💎 割安株</button>
+                <button class="preset-btn" onclick="applyPreset('growth')">🚀 急騰株</button>
+                <button class="preset-btn" onclick="applyPreset('large_cap')">🏛️ 大型株</button>
+                <button class="preset-btn" onclick="applyPreset('small_cap')">🌱 小型株</button>
+                <button class="preset-btn" onclick="applyPreset('high_volume')">📈 高出来高</button>
+                <button class="preset-btn" onclick="applyPreset('decline')">📉 下落株</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 結果サマリー -->
+    <div class="result-summary" id="resultSummary" style="display:none;">
+        <div class="summary-container">
+            <span class="summary-date" id="summaryDate"></span>
+            <span class="summary-count" id="summaryCount"></span>
+            <span class="summary-time" id="summaryTime"></span>
+        </div>
+    </div>
+
+    <!-- ローディング -->
+    <div class="loading-overlay" id="loadingOverlay" style="display:none;">
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <p>スクリーニング実行中...</p>
+        </div>
+    </div>
+
+    <!-- 結果テーブル -->
+    <div class="results-container">
+        <!-- 初期メッセージ -->
+        <div class="empty-state" id="emptyState">
+            <div class="empty-icon">🔍</div>
+            <h2>銘柄スクリーニング</h2>
+            <p>条件を設定して「スクリーニング実行」をクリックしてください</p>
+            <p class="sub">J-Quants API で東証上場 約4,400銘柄を検索</p>
+        </div>
+
+        <div class="table-wrapper" id="tableWrapper" style="display:none;">
+            <table class="screening-table" id="resultTable">
+                <thead>
+                    <tr>
+                        <th class="col-rank">#</th>
+                        <th class="col-code">コード</th>
+                        <th class="col-name">銘柄名</th>
+                        <th class="col-market">市場</th>
+                        <th class="col-sector">業種</th>
+                        <th class="col-price sortable" data-sort="close">株価</th>
+                        <th class="col-change sortable" data-sort="change_rate">前日比</th>
+                        <th class="col-volume sortable" data-sort="volume">出来高</th>
+                        <th class="col-turnover sortable" data-sort="turnover">売買代金</th>
+                        <th class="col-range">値幅 (安-高)</th>
+                    </tr>
+                </thead>
+                <tbody id="resultBody">
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script src="/static/js/screening.js"></script>
+</body>
+
+</html>
