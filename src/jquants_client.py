@@ -63,8 +63,9 @@ class JQuantsClient:
         master = self.get_master()
         sectors = {}
         for item in master:
-            code = item.get("S33", "")
-            name = item.get("S33Nm", "")
+            # J-Quants v2 field names
+            code = item.get("Sector33Code", "") or item.get("S33", "")
+            name = item.get("Sector33CodeName", "") or item.get("S33Nm", "")
             if code and name and code not in sectors:
                 sectors[code] = name
         return [{"code": k, "name": v} for k, v in sorted(sectors.items())]
@@ -74,7 +75,7 @@ class JQuantsClient:
         master = self.get_master()
         markets = set()
         for item in master:
-            mkt = item.get("MktNm", "")
+            mkt = item.get("MarketCodeName", "") or item.get("MktNm", "")
             if mkt:
                 markets.add(mkt)
         return sorted(markets)
@@ -117,20 +118,62 @@ class JQuantsClient:
 
     # ========== スクリーニング ==========
 
+    def _get_close(self, price: Dict) -> Optional[float]:
+        """終値を取得（J-Quants v2対応）"""
+        # J-Quants v2 full names first, then abbreviated fallback
+        return (price.get("AdjustmentClose") or price.get("Close")
+                or price.get("AdjC") or price.get("C"))
+
+    def _get_volume(self, price: Dict) -> float:
+        """出来高を取得（J-Quants v2対応）"""
+        return (price.get("AdjustmentVolume") or price.get("Volume")
+                or price.get("AdjVo") or price.get("Vo") or 0)
+
+    def _get_turnover(self, price: Dict) -> float:
+        """売買代金を取得（J-Quants v2対応）"""
+        return price.get("TurnoverValue") or price.get("Va") or 0
+
+    def _get_market_name(self, item: Dict) -> str:
+        """市場区分名を取得（J-Quants v2対応）"""
+        return item.get("MarketCodeName") or item.get("MktNm") or ""
+
+    def _get_sector_code(self, item: Dict) -> str:
+        return item.get("Sector33Code") or item.get("S33") or ""
+
+    def _get_sector_name(self, item: Dict) -> str:
+        return item.get("Sector33CodeName") or item.get("S33Nm") or ""
+
+    def _get_company_name(self, item: Dict) -> str:
+        return item.get("CompanyName") or item.get("CoName") or ""
+
+    def _get_scale(self, item: Dict) -> str:
+        return item.get("ScaleCategory") or item.get("ScaleCat") or ""
+
+    def _normalize_code(self, code: str) -> str:
+        """J-Quants 5桁コードを4桁に変換（末尾の0を1つ除去）"""
+        if len(code) == 5 and code.endswith("0"):
+            return code[:-1]
+        return code
+
     def screen_stocks(self, filters: Dict) -> List[Dict]:
         """
         銘柄スクリーニング
 
         filters:
             market: 市場区分（プライム, スタンダード, グロース）
-            sector: 業種コード（S33）
+            sector: 業種コード（Sector33Code）
             price_min / price_max: 株価範囲
             volume_min: 最低出来高
+            turnover_min: 最低売買代金
             change_rate_min / change_rate_max: 前日比(%)範囲
+            sort_by: ソートキー
+            sort_desc: 降順フラグ
+            limit: 取得件数上限
         """
         # 1. マスターデータで市場・業種フィルタ
         master = self.get_master()
         if not master:
+            logger.warning("マスターデータが取得できませんでした（APIキー未設定の可能性）")
             return []
 
         # マスターをコードで辞書化
@@ -142,28 +185,31 @@ class JQuantsClient:
         # 対象銘柄を絞る
         target_codes = []
         for item in master:
-            if market_filter and item.get("MktNm", "") != market_filter:
+            market_name = self._get_market_name(item)
+            sector_code = self._get_sector_code(item)
+
+            if market_filter and market_name != market_filter:
                 continue
-            if sector_filter and item.get("S33", "") != sector_filter:
+            if sector_filter and sector_code != sector_filter:
                 continue
             # TOKYO PRO MARKETは除外（流動性低い）
-            if item.get("MktNm") == "TOKYO PRO MARKET":
+            if market_name == "TOKYO PRO MARKET":
                 continue
             target_codes.append(item["Code"])
 
         logger.info(f"スクリーニング対象: {len(target_codes)}銘柄")
 
-        # 2. 直近の株価データを取得
-        # 全銘柄の株価を日付指定で一括取得
+        # 2. 直近の株価データを取得（全銘柄 日付指定で一括）
         today = datetime.now()
         prices_data = []
-        # 直近5営業日を試行
+        used_date = ""
         for days_back in range(0, 7):
             check_date = (today - timedelta(days=days_back)).strftime("%Y-%m-%d")
             result = self._get("/equities/bars/daily", {"date": check_date})
             data = result.get("data", [])
             if data and len(data) > 100:
                 prices_data = data
+                used_date = check_date
                 logger.info(f"株価データ取得: {check_date} ({len(data)}銘柄)")
                 break
             time.sleep(0.3)
@@ -179,24 +225,24 @@ class JQuantsClient:
 
         # 前日の株価も取得（前日比計算用）
         prev_prices = {}
-        if prices_data:
-            price_date = prices_data[0].get("Date", "")
-            if price_date:
-                dt = datetime.strptime(price_date, "%Y-%m-%d")
-                for days_back in range(1, 7):
-                    prev_date = (dt - timedelta(days=days_back)).strftime("%Y-%m-%d")
-                    result = self._get("/equities/bars/daily", {"date": prev_date})
-                    data = result.get("data", [])
-                    if data and len(data) > 100:
-                        for p in data:
-                            prev_prices[p["Code"]] = p
-                        break
-                    time.sleep(0.3)
+        if used_date:
+            dt = datetime.strptime(used_date, "%Y-%m-%d")
+            for days_back in range(1, 7):
+                prev_date = (dt - timedelta(days=days_back)).strftime("%Y-%m-%d")
+                result = self._get("/equities/bars/daily", {"date": prev_date})
+                data = result.get("data", [])
+                if data and len(data) > 100:
+                    for p in data:
+                        prev_prices[p["Code"]] = p
+                    logger.info(f"前日株価取得: {prev_date} ({len(data)}銘柄)")
+                    break
+                time.sleep(0.3)
 
         # 3. フィルター適用
         price_min = filters.get("price_min")
         price_max = filters.get("price_max")
         volume_min = filters.get("volume_min")
+        turnover_min = filters.get("turnover_min")
         change_rate_min = filters.get("change_rate_min")
         change_rate_max = filters.get("change_rate_max")
 
@@ -206,8 +252,9 @@ class JQuantsClient:
                 continue
 
             price = price_dict[code]
-            close = price.get("AdjC") or price.get("C")
-            volume = price.get("AdjVo") or price.get("Vo") or 0
+            close = self._get_close(price)
+            volume = self._get_volume(price)
+            turnover = self._get_turnover(price)
 
             if close is None or close == 0:
                 continue
@@ -222,12 +269,16 @@ class JQuantsClient:
             if volume_min is not None and volume < volume_min:
                 continue
 
+            # 売買代金フィルター（万円単位で入力 → 円換算）
+            if turnover_min is not None and turnover < turnover_min:
+                continue
+
             # 前日比計算
             change_rate = 0.0
             change_amount = 0.0
             prev = prev_prices.get(code)
             if prev:
-                prev_close = prev.get("AdjC") or prev.get("C") or 0
+                prev_close = self._get_close(prev) or 0
                 if prev_close > 0:
                     change_amount = close - prev_close
                     change_rate = (change_amount / prev_close) * 100
@@ -240,26 +291,28 @@ class JQuantsClient:
 
             # マスター情報を結合
             m = master_dict.get(code, {})
+            display_code = self._normalize_code(code)
+
             results.append({
-                "code": code.rstrip("0"),  # 末尾の0を除去
-                "name": m.get("CoName", ""),
-                "market": m.get("MktNm", ""),
-                "sector": m.get("S33Nm", ""),
-                "sector_code": m.get("S33", ""),
-                "scale": m.get("ScaleCat", ""),
-                "date": price.get("Date", ""),
-                "open": price.get("AdjO") or price.get("O"),
-                "high": price.get("AdjH") or price.get("H"),
-                "low": price.get("AdjL") or price.get("L"),
+                "code": display_code,
+                "name": self._get_company_name(m),
+                "market": self._get_market_name(m),
+                "sector": self._get_sector_name(m),
+                "sector_code": self._get_sector_code(m),
+                "scale": self._get_scale(m),
+                "date": price.get("Date", used_date),
+                "open": price.get("AdjustmentOpen") or price.get("Open") or price.get("AdjO") or price.get("O"),
+                "high": price.get("AdjustmentHigh") or price.get("High") or price.get("AdjH") or price.get("H"),
+                "low": price.get("AdjustmentLow") or price.get("Low") or price.get("AdjL") or price.get("L"),
                 "close": close,
                 "volume": volume,
-                "turnover": price.get("Va", 0),
+                "turnover": turnover,
                 "change_amount": round(change_amount, 1),
                 "change_rate": round(change_rate, 2),
             })
 
         # ソート
-        sort_by = filters.get("sort_by", "volume")
+        sort_by = filters.get("sort_by", "turnover")
         sort_desc = filters.get("sort_desc", True)
 
         if sort_by in ["close", "volume", "turnover", "change_rate", "change_amount"]:
