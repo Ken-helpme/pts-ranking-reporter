@@ -553,3 +553,239 @@
         display: none;
     }
 }
+
+/* ==============================
+   今買うべき10銘柄
+   ============================== */
+
+.top-picks-section {
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    padding: 24px 0;
+}
+
+.top-picks-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 24px;
+}
+
+.top-picks-header {
+    margin-bottom: 16px;
+}
+
+.top-picks-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+}
+
+.top-picks-icon {
+    font-size: 22px;
+}
+
+.top-picks-title h2 {
+    font-size: 20px;
+    font-weight: 700;
+    color: #1e293b;
+}
+
+.top-picks-badge {
+    font-size: 12px;
+    color: #64748b;
+    background: #e2e8f0;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-weight: 500;
+}
+
+.top-picks-sub {
+    font-size: 12px;
+    color: #94a3b8;
+    margin-left: 32px;
+}
+
+/* ローディング */
+.picks-loading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #64748b;
+    font-size: 13px;
+    padding: 20px 0;
+}
+
+.picks-spinner {
+    width: 18px;
+    height: 18px;
+    border: 2px solid #e2e8f0;
+    border-top-color: #2563eb;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+}
+
+.picks-error {
+    color: #dc2626;
+    font-size: 13px;
+    padding: 12px 16px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 6px;
+}
+
+/* ピックカードグリッド */
+.picks-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+@media (max-width: 1200px) {
+    .picks-grid { grid-template-columns: repeat(4, 1fr); }
+}
+@media (max-width: 900px) {
+    .picks-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 600px) {
+    .picks-grid { grid-template-columns: repeat(2, 1fr); }
+    .top-picks-sub { margin-left: 0; }
+}
+
+/* ピックカード */
+.pick-card {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 14px;
+    position: relative;
+    transition: box-shadow 0.15s ease, border-color 0.15s ease;
+    cursor: default;
+}
+
+.pick-card:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    border-color: #bfdbfe;
+}
+
+.pick-card.rank-top {
+    border-color: #fbbf24;
+    background: linear-gradient(135deg, #fffbeb 0%, #fff 60%);
+}
+
+.pick-rank-badge {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #2563eb;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.pick-card.rank-top .pick-rank-badge {
+    background: #f59e0b;
+}
+
+.pick-code-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-bottom: 2px;
+    padding-right: 28px;
+}
+
+.pick-code-link {
+    font-size: 15px;
+    font-weight: 700;
+    color: #2563eb;
+    text-decoration: none;
+    font-family: 'Monaco', 'Menlo', monospace;
+}
+
+.pick-code-link:hover {
+    text-decoration: underline;
+}
+
+.pick-market-badge {
+    font-size: 9px;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+
+.pick-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: #374151;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 8px;
+}
+
+.pick-price-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.pick-price {
+    font-size: 16px;
+    font-weight: 700;
+    color: #1e293b;
+    font-variant-numeric: tabular-nums;
+}
+
+.pick-change {
+    font-size: 13px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.pick-change.up   { color: #dc2626; }
+.pick-change.down { color: #16a34a; }
+.pick-change.flat { color: #94a3b8; }
+
+.pick-turnover {
+    font-size: 11px;
+    color: #64748b;
+    margin-bottom: 8px;
+}
+
+.pick-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.pick-tag {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 4px;
+}
+
+.tag-surge    { background: #fee2e2; color: #991b1b; }
+.tag-rising   { background: #fef3c7; color: #92400e; }
+.tag-steady   { background: #d1fae5; color: #065f46; }
+.tag-prime    { background: #dbeafe; color: #1d4ed8; }
+.tag-growth   { background: #ede9fe; color: #5b21b6; }
+.tag-mega     { background: #f1f5f9; color: #334155; }
+.tag-liquid   { background: #ecfdf5; color: #047857; }
+.tag-default  { background: #f1f5f9; color: #475569; }
+
+.picks-disclaimer {
+    font-size: 11px;
+    color: #94a3b8;
+    margin-top: 4px;
+}

@@ -138,6 +138,36 @@
         </div>
     </div>
 
+    <!-- 今買うべき10銘柄 -->
+    <div class="top-picks-section" id="topPicksSection">
+        <div class="top-picks-container">
+            <div class="top-picks-header">
+                <div class="top-picks-title">
+                    <span class="top-picks-icon">🎯</span>
+                    <h2>今買うべき10銘柄</h2>
+                    <span class="top-picks-badge" id="topPicksDate"></span>
+                </div>
+                <p class="top-picks-sub">上昇モメンタム × 売買代金でスコアリング。TOKYO PRO MARKET除く全上場銘柄から算出。</p>
+            </div>
+
+            <!-- ローディング -->
+            <div class="picks-loading" id="picksLoading">
+                <div class="picks-spinner"></div>
+                <span>データ取得中...</span>
+            </div>
+
+            <!-- エラー -->
+            <div class="picks-error" id="picksError" style="display:none;">
+                <span>⚠️ </span><span id="picksErrorMsg"></span>
+            </div>
+
+            <!-- グリッド -->
+            <div class="picks-grid" id="picksGrid" style="display:none;"></div>
+
+            <p class="picks-disclaimer">※ 本情報は投資助言ではありません。投資判断はご自身の責任で行ってください。</p>
+        </div>
+    </div>
+
     <!-- 結果サマリー -->
     <div class="result-summary" id="resultSummary" style="display:none;">
         <div class="summary-container">

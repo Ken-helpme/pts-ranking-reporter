@@ -5,7 +5,95 @@
 // 初期化
 document.addEventListener('DOMContentLoaded', () => {
     loadSectors();
+    loadTopPicks();
 });
+
+/**
+ * 今買うべき10銘柄を自動ロード
+ */
+async function loadTopPicks() {
+    const grid    = document.getElementById('picksGrid');
+    const loading = document.getElementById('picksLoading');
+    const errEl   = document.getElementById('picksError');
+    const errMsg  = document.getElementById('picksErrorMsg');
+    const dateEl  = document.getElementById('topPicksDate');
+
+    loading.style.display = 'flex';
+    grid.style.display    = 'none';
+    errEl.style.display   = 'none';
+
+    try {
+        const res  = await fetch('/api/screening/top_picks?n=10');
+        const data = await res.json();
+
+        if (data.success && data.picks && data.picks.length > 0) {
+            dateEl.textContent = data.date ? `📅 ${data.date} 終値ベース` : '';
+            renderPickCards(data.picks);
+            grid.style.display = 'grid';
+        } else {
+            const msg = data.error || '銘柄データが取得できませんでした';
+            errMsg.textContent = msg;
+            errEl.style.display = 'block';
+        }
+    } catch (e) {
+        errMsg.textContent = '通信エラー: ' + e.message;
+        errEl.style.display = 'block';
+    } finally {
+        loading.style.display = 'none';
+    }
+}
+
+function renderPickCards(picks) {
+    const grid = document.getElementById('picksGrid');
+    grid.innerHTML = '';
+
+    const tagClasses = {
+        '急騰':   'tag-surge',
+        '上昇':   'tag-rising',
+        '堅調':   'tag-steady',
+        'プライム': 'tag-prime',
+        'グロース': 'tag-growth',
+        '超大型': 'tag-mega',
+        '大商い': 'tag-liquid',
+        '高流動性': 'tag-liquid',
+    };
+
+    picks.forEach((s, idx) => {
+        const rank    = idx + 1;
+        const isTop3  = rank <= 3;
+        const cr      = s.change_rate;
+        const crSign  = cr > 0 ? '+' : '';
+        const crClass = cr > 0 ? 'up' : cr < 0 ? 'down' : 'flat';
+
+        const mktClass = s.market === 'プライム' ? 'market-prime'
+                       : s.market === 'スタンダード' ? 'market-standard'
+                       : s.market === 'グロース' ? 'market-growth' : '';
+
+        const tagsHtml = (s.tags || []).map(tag => {
+            const cls = tagClasses[tag] || 'tag-default';
+            return `<span class="pick-tag ${cls}">${escHtml(tag)}</span>`;
+        }).join('');
+
+        const card = document.createElement('div');
+        card.className = `pick-card${isTop3 ? ' rank-top' : ''}`;
+        card.innerHTML = `
+            <div class="pick-rank-badge">${rank}</div>
+            <div class="pick-code-row">
+                <a href="https://kabutan.jp/stock/?code=${escHtml(s.code)}"
+                   target="_blank" rel="noopener" class="pick-code-link">${escHtml(s.code)}</a>
+                <span class="pick-market-badge ${mktClass}">${escHtml(s.market)}</span>
+            </div>
+            <div class="pick-name" title="${escHtml(s.name)}">${escHtml(s.name)}</div>
+            <div class="pick-price-row">
+                <span class="pick-price">¥${formatNumber(s.close)}</span>
+                <span class="pick-change ${crClass}">${crSign}${cr.toFixed(2)}%</span>
+            </div>
+            <div class="pick-turnover">売買代金 ${formatTurnover(s.turnover)}</div>
+            <div class="pick-tags">${tagsHtml}</div>
+        `;
+        grid.appendChild(card);
+    });
+}
 
 /**
  * 業種セレクトボックスにオプションを追加

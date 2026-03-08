@@ -334,6 +334,24 @@ def screening_search():
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})
 
+@app.route('/api/screening/top_picks')
+def screening_top_picks():
+    """今買うべき銘柄トップ10"""
+    try:
+        n = request.args.get('n', 10, type=int)
+        picks = jquants.get_top_picks(n=n)
+        date = picks[0]['date'] if picks else ''
+        return jsonify({
+            'success': True,
+            'picks': picks,
+            'total': len(picks),
+            'date': date
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
 if __name__ == '__main__':
     if ANTHROPIC_API_KEY:
         print("✅ Claude API Key: 設定済み")
