@@ -789,3 +789,276 @@
     color: #94a3b8;
     margin-top: 4px;
 }
+
+/* ==============================
+   出来高急増×上昇トレンド
+   ============================== */
+
+.breakout-section {
+    background: #fff;
+    border-bottom: 1px solid #e2e8f0;
+    padding: 24px 0 28px;
+}
+
+.breakout-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 24px;
+}
+
+.breakout-header {
+    margin-bottom: 16px;
+}
+
+.breakout-title-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+    flex-wrap: wrap;
+}
+
+.breakout-icon { font-size: 22px; }
+
+.breakout-title-row h2 {
+    font-size: 20px;
+    font-weight: 700;
+    color: #1e293b;
+}
+
+.breakout-badge {
+    font-size: 12px;
+    color: #64748b;
+    background: #e2e8f0;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-weight: 500;
+}
+
+.breakout-refresh-btn {
+    margin-left: auto;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    color: #64748b;
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-family: 'Inter', 'Noto Sans JP', sans-serif;
+}
+.breakout-refresh-btn:hover {
+    background: #e2e8f0;
+    color: #1e293b;
+}
+.breakout-refresh-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.breakout-sub {
+    font-size: 12px;
+    color: #94a3b8;
+    margin-left: 32px;
+}
+
+.breakout-loading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #64748b;
+    font-size: 13px;
+    padding: 20px 0;
+}
+
+.breakout-spinner {
+    width: 18px;
+    height: 18px;
+    border: 2px solid #e2e8f0;
+    border-top-color: #2563eb;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+}
+
+.breakout-error {
+    color: #dc2626;
+    font-size: 13px;
+    padding: 12px 16px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 6px;
+}
+
+/* グリッド */
+.breakout-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 10px;
+}
+@media (max-width: 1100px) { .breakout-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 800px)  { .breakout-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 500px)  { .breakout-grid { grid-template-columns: 1fr; } }
+
+/* ブレイクアウトカード */
+.breakout-card {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 12px 14px 10px;
+    position: relative;
+    transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.breakout-card:hover {
+    box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+    border-color: #93c5fd;
+}
+.breakout-card.rank-top1 { border-color: #f59e0b; background: linear-gradient(135deg, #fffbeb 0%, #fff 50%); }
+.breakout-card.rank-top3 { border-color: #60a5fa; background: linear-gradient(135deg, #eff6ff 0%, #fff 50%); }
+
+/* ランクバッジ */
+.bo-rank {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #64748b;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.breakout-card.rank-top1 .bo-rank { background: #f59e0b; }
+.breakout-card.rank-top3 .bo-rank { background: #2563eb; }
+
+/* コード行 */
+.bo-code-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding-right: 28px;
+    margin-bottom: 1px;
+}
+.bo-code-link {
+    font-size: 14px;
+    font-weight: 700;
+    color: #2563eb;
+    text-decoration: none;
+    font-family: 'Monaco', 'Menlo', monospace;
+}
+.bo-code-link:hover { text-decoration: underline; }
+
+.bo-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: #374151;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 6px;
+}
+
+/* 価格行 */
+.bo-price-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 2px;
+}
+.bo-price {
+    font-size: 15px;
+    font-weight: 700;
+    color: #1e293b;
+    font-variant-numeric: tabular-nums;
+}
+.bo-change {
+    font-size: 13px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+.bo-change.up   { color: #dc2626; }
+.bo-change.down { color: #16a34a; }
+
+/* 出来高比率バー */
+.bo-vol-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+.bo-vol-label {
+    font-size: 10px;
+    color: #64748b;
+    white-space: nowrap;
+    min-width: 44px;
+}
+.bo-vol-bar-wrap {
+    flex: 1;
+    height: 5px;
+    background: #f1f5f9;
+    border-radius: 3px;
+    overflow: hidden;
+}
+.bo-vol-bar {
+    height: 100%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, #2563eb, #60a5fa);
+    transition: width 0.4s ease;
+}
+.bo-vol-ratio {
+    font-size: 11px;
+    font-weight: 700;
+    color: #2563eb;
+    white-space: nowrap;
+    min-width: 36px;
+    text-align: right;
+}
+
+/* スパークライン */
+.bo-sparkline {
+    margin-bottom: 8px;
+    line-height: 0;
+}
+.bo-sparkline svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+/* タグ */
+.bo-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+}
+.bo-tag {
+    font-size: 9px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+.btag-vol5   { background: #fce7f3; color: #9d174d; }
+.btag-vol3   { background: #fee2e2; color: #991b1b; }
+.btag-vol2   { background: #fef3c7; color: #92400e; }
+.btag-volinc { background: #ecfdf5; color: #065f46; }
+.btag-surge  { background: #fee2e2; color: #991b1b; }
+.btag-rising { background: #fef9c3; color: #713f12; }
+.btag-steady { background: #d1fae5; color: #065f46; }
+.btag-p20    { background: #ede9fe; color: #5b21b6; }
+.btag-p10    { background: #ddd6fe; color: #5b21b6; }
+.btag-mega   { background: #f1f5f9; color: #334155; }
+.btag-large  { background: #ecfdf5; color: #047857; }
+.btag-prime  { background: #dbeafe; color: #1d4ed8; }
+.btag-growth { background: #ede9fe; color: #5b21b6; }
+.btag-def    { background: #f1f5f9; color: #475569; }
+
+.breakout-disclaimer {
+    font-size: 11px;
+    color: #94a3b8;
+    margin-top: 6px;
+}

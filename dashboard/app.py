@@ -334,6 +334,26 @@ def screening_search():
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})
 
+@app.route('/api/screening/volume_breakout')
+def screening_volume_breakout():
+    """出来高急増×上昇トレンド銘柄"""
+    try:
+        days  = request.args.get('days', 10, type=int)
+        top_n = request.args.get('n', 20, type=int)
+        stocks = jquants.get_volume_breakout_stocks(days=days, top_n=top_n)
+        date = stocks[0]['date'] if stocks else ''
+        return jsonify({
+            'success': True,
+            'stocks': stocks,
+            'total': len(stocks),
+            'date': date,
+            'days': days,
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
 @app.route('/api/screening/top_picks')
 def screening_top_picks():
     """今買うべき銘柄トップ10"""

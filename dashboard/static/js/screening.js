@@ -6,6 +6,7 @@
 document.addEventListener('DOMContentLoaded', () => {
     loadSectors();
     loadTopPicks();
+    loadBreakoutStocks();
 });
 
 /**
@@ -93,6 +94,169 @@ function renderPickCards(picks) {
         `;
         grid.appendChild(card);
     });
+}
+
+/* ============================================================
+   出来高急増×上昇トレンド
+   ============================================================ */
+
+async function loadBreakoutStocks() {
+    const grid    = document.getElementById('breakoutGrid');
+    const loading = document.getElementById('breakoutLoading');
+    const errEl   = document.getElementById('breakoutError');
+    const errMsg  = document.getElementById('breakoutErrorMsg');
+    const dateEl  = document.getElementById('breakoutDate');
+    const btn     = document.getElementById('breakoutRefreshBtn');
+
+    loading.style.display = 'flex';
+    grid.style.display    = 'none';
+    errEl.style.display   = 'none';
+    if (btn) btn.disabled = true;
+
+    try {
+        const res  = await fetch('/api/screening/volume_breakout?days=10&n=20');
+        const data = await res.json();
+
+        if (data.success && data.stocks && data.stocks.length > 0) {
+            dateEl.textContent = data.date ? `📅 ${data.date} 終値ベース` : '';
+            renderBreakoutCards(data.stocks);
+            grid.style.display = 'grid';
+        } else {
+            errMsg.textContent = data.error || 'データが取得できませんでした';
+            errEl.style.display = 'block';
+        }
+    } catch (e) {
+        errMsg.textContent = '通信エラー: ' + e.message;
+        errEl.style.display = 'block';
+    } finally {
+        loading.style.display = 'none';
+        if (btn) btn.disabled = false;
+    }
+}
+
+function renderBreakoutCards(stocks) {
+    const grid = document.getElementById('breakoutGrid');
+    grid.innerHTML = '';
+
+    const tagMap = {
+        '出来高×5↑': 'btag-vol5',  '出来高×3↑': 'btag-vol3',
+        '出来高×2↑': 'btag-vol2',  '出来高増加': 'btag-volinc',
+        '急騰':       'btag-surge', '上昇':       'btag-rising',
+        '堅調':       'btag-steady','5日+20%↑':   'btag-p20',
+        '5日+10%↑':  'btag-p10',  '超大型':     'btag-mega',
+        '大商い':     'btag-large', 'プライム':   'btag-prime',
+        'グロース':   'btag-growth',
+    };
+
+    stocks.forEach((s, idx) => {
+        const rank   = idx + 1;
+        const isTop1 = rank === 1;
+        const isTop3 = rank <= 3;
+        const cr     = s.change_rate;
+        const crSign = cr > 0 ? '+' : '';
+        const crCls  = cr > 0 ? 'up' : cr < 0 ? 'down' : '';
+
+        const mktCls = s.market === 'プライム'   ? 'market-prime'
+                     : s.market === 'スタンダード' ? 'market-standard'
+                     : s.market === 'グロース'    ? 'market-growth' : '';
+
+        const tagsHtml = (s.tags || []).map(t =>
+            `<span class="bo-tag ${tagMap[t] || 'btag-def'}">${escHtml(t)}</span>`
+        ).join('');
+
+        // 出来高比率バー（最大5倍 → 100%）
+        const volPct = Math.min((s.vol_ratio_5d / 5) * 100, 100).toFixed(0);
+
+        // スパークライン SVG
+        const svg = buildSparklineSVG(s.sparkline_prices || [], s.sparkline_volumes || []);
+
+        const cardCls = isTop1 ? 'breakout-card rank-top1'
+                      : isTop3 ? 'breakout-card rank-top3'
+                      : 'breakout-card';
+
+        const card = document.createElement('div');
+        card.className = cardCls;
+        card.innerHTML = `
+            <div class="bo-rank">${rank}</div>
+            <div class="bo-code-row">
+                <a href="https://kabutan.jp/stock/?code=${escHtml(s.code)}"
+                   target="_blank" rel="noopener" class="bo-code-link">${escHtml(s.code)}</a>
+                <span class="pick-market-badge ${mktCls}" style="font-size:9px;">${escHtml(s.market)}</span>
+            </div>
+            <div class="bo-name" title="${escHtml(s.name)}">${escHtml(s.name)}</div>
+            <div class="bo-price-row">
+                <span class="bo-price">¥${formatNumber(s.close)}</span>
+                <span class="bo-change ${crCls}">${crSign}${cr.toFixed(2)}%</span>
+            </div>
+            <div class="bo-vol-row">
+                <span class="bo-vol-label">出来高比</span>
+                <div class="bo-vol-bar-wrap">
+                    <div class="bo-vol-bar" style="width:${volPct}%"></div>
+                </div>
+                <span class="bo-vol-ratio">×${s.vol_ratio_5d.toFixed(1)}</span>
+            </div>
+            <div class="bo-sparkline">${svg}</div>
+            <div class="bo-tags">${tagsHtml}</div>
+        `;
+        grid.appendChild(card);
+    });
+}
+
+/**
+ * 価格+出来高スパークライン SVG を生成
+ * @param {number[]} prices  - 古い順の終値配列
+ * @param {number[]} volumes - 古い順の出来高配列
+ */
+function buildSparklineSVG(prices, volumes) {
+    if (!prices.length) return '';
+
+    const W  = 160, PH = 44, VH = 16, GAP = 3;
+    const H  = PH + GAP + VH;
+    const n  = prices.length;
+
+    const maxP = Math.max(...prices);
+    const minP = Math.min(...prices);
+    const rangeP = maxP - minP || 1;
+    const maxV   = Math.max(...volumes) || 1;
+
+    const xOf = i => (i / Math.max(n - 1, 1)) * W;
+    const yOfP = p => PH - 4 - ((p - minP) / rangeP) * (PH - 8);
+
+    // 価格ライン
+    const pts = prices.map((p, i) => `${xOf(i).toFixed(1)},${yOfP(p).toFixed(1)}`).join(' ');
+
+    // 塗りつぶしグラデーション（ラインの下）
+    const fillPts = `0,${PH} ` + pts + ` ${W},${PH}`;
+
+    // 出来高バー
+    const bw = Math.max(W / n - 1.5, 1);
+    const bars = volumes.map((v, i) => {
+        const bh = Math.max((v / maxV) * (VH - 2), 1);
+        const bx = xOf(i) - bw / 2;
+        const by = PH + GAP + VH - bh;
+        // 今日（最後）のバーは赤系、過去は青系
+        const fill = i === n - 1 ? '#2563eb' : '#93c5fd';
+        return `<rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" fill="${fill}" opacity="0.7" rx="1"/>`;
+    }).join('');
+
+    // ラスト価格の円
+    const lx = xOf(n - 1).toFixed(1);
+    const ly = yOfP(prices[n - 1]).toFixed(1);
+    const lineColor = prices[n - 1] >= prices[0] ? '#2563eb' : '#dc2626';
+    const areaColor = prices[n - 1] >= prices[0] ? '#dbeafe' : '#fee2e2';
+
+    return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="overflow:visible">
+        <defs>
+            <linearGradient id="sg_${Date.now()}_${Math.random().toString(36).slice(2)}" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="${areaColor}" stop-opacity="0.8"/>
+                <stop offset="100%" stop-color="${areaColor}" stop-opacity="0"/>
+            </linearGradient>
+        </defs>
+        <polygon points="${fillPts}" fill="${areaColor}" opacity="0.35"/>
+        ${bars}
+        <polyline points="${pts}" fill="none" stroke="${lineColor}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="${lx}" cy="${ly}" r="2.5" fill="${lineColor}"/>
+    </svg>`;
 }
 
 /**

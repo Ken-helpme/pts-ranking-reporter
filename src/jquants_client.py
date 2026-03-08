@@ -368,3 +368,193 @@ class JQuantsClient:
             s["tags"] = tags
 
         return picks
+
+    # ========== 出来高急増×上昇トレンド ==========
+
+    def get_volume_breakout_stocks(self, days: int = 10, top_n: int = 20) -> List[Dict]:
+        """
+        出来高急増 × 上昇トレンド銘柄を検出
+
+        - 過去 days 日分の株価データを並列取得
+        - 出来高比率（今日 ÷ 前5日平均）と株価騰落率でスコアリング
+        - 各銘柄にスパークライン用データ（直近10日の終値・出来高）を付与
+
+        Returns:
+            List[Dict] with extra fields:
+                vol_ratio_5d   : 今日出来高 ÷ 前5日平均出来高
+                price_5d_chg   : 5日間株価騰落率(%)
+                price_10d_chg  : 10日間株価騰落率(%)
+                sparkline_prices  : 直近days日の終値リスト（古い順）
+                sparkline_volumes : 直近days日の出来高リスト（古い順）
+                tags           : 特徴タグリスト
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        master = self.get_master()
+        if not master:
+            return []
+
+        master_dict = {item["Code"]: item for item in master}
+        valid_codes = {
+            item["Code"]
+            for item in master
+            if item.get("MktNm") != "TOKYO PRO MARKET"
+        }
+
+        # ── 1. 過去 days+5 営業日候補を並列フェッチ ──
+        today = datetime.now()
+        candidate_dates = [
+            (today - timedelta(days=i)).strftime("%Y-%m-%d")
+            for i in range(0, days + 10)
+        ]
+
+        date_data: Dict[str, Dict] = {}   # date -> {code: price_dict}
+
+        def fetch_one(date: str):
+            data = self._fetch_prices_for_date(date)
+            if data and len(data) > 100:
+                return date, {p["Code"]: p for p in data}
+            return date, None
+
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            futures = {ex.submit(fetch_one, d): d for d in candidate_dates}
+            for fut in as_completed(futures):
+                date, result = fut.result()
+                if result:
+                    date_data[date] = result
+
+        # 有効な取引日を新しい順にソート
+        trading_days = sorted(date_data.keys(), reverse=True)
+        if len(trading_days) < 3:
+            logger.warning("有効な取引日データが不足しています")
+            return []
+
+        # 直近 days 日分に絞る
+        trading_days = trading_days[:days]
+        today_date   = trading_days[0]   # 最新取引日
+        today_prices = date_data[today_date]
+
+        # ── 2. 銘柄ごとに指標を計算 ──
+        results = []
+
+        for code in valid_codes:
+            if code not in today_prices:
+                continue
+
+            # 直近 days 日の終値・出来高を収集（新しい順 → 反転して古い順）
+            closes  = []
+            volumes = []
+            for d in trading_days:
+                p = date_data[d].get(code)
+                if p is None:
+                    continue
+                c = p.get("AdjC") or p.get("C")
+                v = p.get("AdjVo") or p.get("Vo") or 0
+                if c:
+                    closes.append(c)
+                    volumes.append(v)
+
+            if len(closes) < 3:
+                continue
+
+            # 古い順に並べ替え
+            closes  = list(reversed(closes))
+            volumes = list(reversed(volumes))
+
+            today_close  = closes[-1]
+            today_vol    = volumes[-1]
+            today_turnover = today_prices[code].get("Va") or 0
+
+            if today_close == 0:
+                continue
+
+            # 出来高比率（今日 ÷ 前5日平均）
+            prev_vols = volumes[-6:-1] if len(volumes) >= 6 else volumes[:-1]
+            avg_vol   = sum(prev_vols) / len(prev_vols) if prev_vols else 1
+            vol_ratio = today_vol / avg_vol if avg_vol > 0 else 0
+
+            # 株価騰落率
+            price_5d_chg  = 0.0
+            price_10d_chg = 0.0
+            if len(closes) >= 6:
+                price_5d_chg  = (today_close - closes[-6]) / closes[-6] * 100
+            elif len(closes) >= 2:
+                price_5d_chg  = (today_close - closes[0]) / closes[0] * 100
+            if len(closes) >= days:
+                price_10d_chg = (today_close - closes[0]) / closes[0] * 100
+
+            # 最低条件: 出来高比率 1.3倍以上 かつ 今日プラス
+            today_p = today_prices[code]
+            today_change = 0.0
+            if len(closes) >= 2:
+                prev_close = closes[-2]
+                if prev_close > 0:
+                    today_change = (today_close - prev_close) / prev_close * 100
+
+            if vol_ratio < 1.3:
+                continue
+            if today_change <= 0:
+                continue
+            if today_turnover < 50_000_000:  # 5000万円未満は除外
+                continue
+
+            # スコア: 出来高比率 × 0.5 + 5日騰落率 × 0.5
+            vol_score   = min(vol_ratio / 5.0, 1.0)
+            price_score = min(max(price_5d_chg, 0) / 15.0, 1.0)
+            score       = vol_score * 0.5 + price_score * 0.5
+
+            m = master_dict.get(code, {})
+            results.append({
+                "code":             self._normalize_code(code),
+                "name":             m.get("CoName", ""),
+                "market":           m.get("MktNm", ""),
+                "sector":           m.get("S33Nm", ""),
+                "date":             today_date,
+                "close":            today_close,
+                "volume":           today_vol,
+                "turnover":         today_turnover,
+                "change_rate":      round(today_change, 2),
+                "vol_ratio_5d":     round(vol_ratio, 2),
+                "price_5d_chg":     round(price_5d_chg, 2),
+                "price_10d_chg":    round(price_10d_chg, 2),
+                "sparkline_prices":  closes,
+                "sparkline_volumes": volumes,
+                "_score":            score,
+            })
+
+        if not results:
+            return []
+
+        results.sort(key=lambda x: x["_score"], reverse=True)
+        top = results[:top_n]
+
+        # ── 3. タグ付け ──
+        for s in top:
+            tags = []
+            vr  = s["vol_ratio_5d"]
+            cr  = s["change_rate"]
+            va  = s["turnover"]
+            mkt = s["market"]
+            p5  = s["price_5d_chg"]
+
+            if vr >= 5:   tags.append("出来高×5↑")
+            elif vr >= 3: tags.append("出来高×3↑")
+            elif vr >= 2: tags.append("出来高×2↑")
+            else:         tags.append("出来高増加")
+
+            if cr >= 10:    tags.append("急騰")
+            elif cr >= 5:   tags.append("上昇")
+            else:           tags.append("堅調")
+
+            if p5 >= 20:    tags.append("5日+20%↑")
+            elif p5 >= 10:  tags.append("5日+10%↑")
+
+            if va >= 10_000_000_000:  tags.append("超大型")
+            elif va >= 1_000_000_000: tags.append("大商い")
+
+            if mkt == "グロース":    tags.append("グロース")
+            elif mkt == "プライム":  tags.append("プライム")
+
+            s["tags"] = tags
+
+        return top
