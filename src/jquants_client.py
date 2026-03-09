@@ -547,9 +547,17 @@ class JQuantsClient:
         top = results[:top_n]
 
         # ── 3. 上位銘柄の6ヶ月チャートデータを並列取得 ──
-        today_dt   = datetime.strptime(today_date, "%Y-%m-%d")
-        chart_to   = today_date
-        chart_from = (today_dt - timedelta(days=185)).strftime("%Y-%m-%d")
+        today_dt    = datetime.strptime(today_date, "%Y-%m-%d")
+        today_real  = datetime.now().strftime("%Y-%m-%d")
+        chart_from  = (today_dt - timedelta(days=185)).strftime("%Y-%m-%d")
+        # 過去日付指定時はシグナル日以降のパフォーマンスも取得（バックテスト用）
+        if today_date < today_real:
+            chart_to = min(
+                (today_dt + timedelta(days=35)).strftime("%Y-%m-%d"),
+                today_real,
+            )
+        else:
+            chart_to = today_date
 
         def fetch_chart(s):
             raw_code = s.pop("_raw_code", None)
@@ -566,15 +574,41 @@ class JQuantsClient:
                         if (p.get("AdjC") or p.get("C"))
                     ]
                     if valid:
-                        dates, prices, vols = zip(*valid)
-                        s["chart_dates"]   = list(dates)
-                        s["chart_prices"]  = list(prices)
-                        s["chart_volumes"] = list(vols)
+                        dates_l, prices_l, vols_l = (list(x) for x in zip(*valid))
+                        s["chart_dates"]   = dates_l
+                        s["chart_prices"]  = prices_l
+                        s["chart_volumes"] = vols_l
+
+                        # ── シグナル日インデックス特定 ──
+                        sig_idx = -1
+                        for i in range(len(dates_l) - 1, -1, -1):
+                            if dates_l[i] <= today_date:
+                                sig_idx = i
+                                break
+                        s["signal_idx"] = sig_idx
+
+                        # ── 順方向リターン計算 ──
+                        if sig_idx >= 0 and sig_idx < len(prices_l):
+                            sig_p = prices_l[sig_idx]
+                            def _fwd(n):
+                                idx = sig_idx + n
+                                return round((prices_l[idx] / sig_p - 1) * 100, 2) \
+                                    if idx < len(prices_l) and sig_p else None
+                            s["fwd_5d"]  = _fwd(5)
+                            s["fwd_10d"] = _fwd(10)
+                            s["fwd_20d"] = _fwd(20)
+                        else:
+                            s["fwd_5d"] = s["fwd_10d"] = s["fwd_20d"] = None
                         return
+
                 s["chart_dates"] = s["chart_prices"] = s["chart_volumes"] = []
+                s["signal_idx"] = -1
+                s["fwd_5d"] = s["fwd_10d"] = s["fwd_20d"] = None
             except Exception as e:
                 logger.warning(f"チャートデータ取得失敗 {raw_code}: {e}")
                 s["chart_dates"] = s["chart_prices"] = s["chart_volumes"] = []
+                s["signal_idx"] = -1
+                s["fwd_5d"] = s["fwd_10d"] = s["fwd_20d"] = None
 
         with ThreadPoolExecutor(max_workers=8) as ex:
             list(ex.map(fetch_chart, top))

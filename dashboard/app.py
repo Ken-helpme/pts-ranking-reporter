@@ -344,12 +344,28 @@ def screening_volume_breakout():
         stocks = jquants.get_volume_breakout_stocks(days=days, top_n=top_n,
                                                     target_date=target_date)
         date = stocks[0]['date'] if stocks else ''
+
+        # ── バックテスト勝率集計 ──
+        win_stats = None
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        if target_date and target_date < today_str and stocks:
+            ws = {}
+            for n, key in [(5, '5d'), (10, '10d'), (20, '20d')]:
+                vals = [s[f'fwd_{key}'] for s in stocks if s.get(f'fwd_{key}') is not None]
+                if vals:
+                    wins = sum(1 for v in vals if v > 0)
+                    ws[f'win_rate_{key}']   = round(wins / len(vals) * 100, 1)
+                    ws[f'avg_return_{key}'] = round(sum(vals) / len(vals), 2)
+                    ws[f'count_{key}']      = len(vals)
+            win_stats = ws if ws else None
+
         return jsonify({
             'success': True,
             'stocks': stocks,
             'total': len(stocks),
             'date': date,
             'days': days,
+            'win_stats': win_stats,
         })
     except Exception as e:
         import traceback

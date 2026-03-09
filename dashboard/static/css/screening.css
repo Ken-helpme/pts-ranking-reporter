@@ -1128,3 +1128,98 @@
     color: #94a3b8;
     margin-top: 6px;
 }
+
+/* ==============================
+   バックテスト勝率サマリー
+   ============================== */
+
+.backtest-stats {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+    padding: 14px 18px;
+    background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+    border: 1px solid #86efac;
+    border-radius: 10px;
+}
+
+.backtest-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #166534;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.bt-stat-cards {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.bt-stat-card {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 8px 14px;
+    text-align: center;
+    min-width: 96px;
+    transition: box-shadow 0.15s ease;
+}
+.bt-stat-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+.bt-stat-card.good    { border-color: #4ade80; }
+.bt-stat-card.neutral { border-color: #fbbf24; }
+.bt-stat-card.poor    { border-color: #f87171; }
+
+.bt-stat-label {
+    font-size: 10px;
+    color: #64748b;
+    font-weight: 600;
+    margin-bottom: 2px;
+}
+
+.bt-stat-value {
+    font-size: 22px;
+    font-weight: 800;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+}
+.bt-stat-card.good    .bt-stat-value { color: #16a34a; }
+.bt-stat-card.neutral .bt-stat-value { color: #d97706; }
+.bt-stat-card.poor    .bt-stat-value { color: #dc2626; }
+
+.bt-stat-sub {
+    font-size: 10px;
+    color: #64748b;
+    margin-top: 2px;
+}
+
+.bt-no-data {
+    font-size: 12px;
+    color: #94a3b8;
+    padding: 4px 0;
+}
+
+/* ── フォワードリターンバッジ ── */
+.bo-fwd-returns {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin: 4px 0 6px;
+}
+
+.fwd-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 4px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+.fwd-win  { background: #dcfce7; color: #166534; }
+.fwd-lose { background: #fee2e2; color: #991b1b; }
+.fwd-na   { background: #f1f5f9; color: #94a3b8; }

@@ -112,6 +112,8 @@ async function loadBreakoutStocks() {
     loading.style.display = 'flex';
     grid.style.display    = 'none';
     errEl.style.display   = 'none';
+    const btStats = document.getElementById('backtestStats');
+    if (btStats) btStats.style.display = 'none';
     if (btn) btn.disabled = true;
 
     try {
@@ -127,6 +129,7 @@ async function loadBreakoutStocks() {
                 ? `📅 ${targetDate} 基準`
                 : (data.date ? `📅 ${data.date} 終値ベース` : '');
             dateEl.textContent = label;
+            renderWinStats(data.win_stats);
             renderBreakoutCards(data.stocks);
             grid.style.display = 'grid';
         } else {
@@ -140,6 +143,43 @@ async function loadBreakoutStocks() {
         loading.style.display = 'none';
         if (btn) btn.disabled = false;
     }
+}
+
+/**
+ * バックテスト勝率サマリーを描画
+ */
+function renderWinStats(ws) {
+    const el = document.getElementById('backtestStats');
+    if (!el) return;
+
+    if (!ws || Object.keys(ws).length === 0) {
+        el.style.display = 'none';
+        return;
+    }
+
+    const fmtCard = (period, label) => {
+        const rate = ws[`win_rate_${period}`];
+        const avg  = ws[`avg_return_${period}`];
+        const cnt  = ws[`count_${period}`];
+        if (rate == null) return '';
+        const cls   = rate >= 60 ? 'good' : rate >= 50 ? 'neutral' : 'poor';
+        const avgSgn = avg > 0 ? '+' : '';
+        return `
+            <div class="bt-stat-card ${cls}">
+                <div class="bt-stat-label">${label}後 勝率</div>
+                <div class="bt-stat-value">${rate}%</div>
+                <div class="bt-stat-sub">平均 ${avgSgn}${avg}%（${cnt}件）</div>
+            </div>`;
+    };
+
+    el.innerHTML = `
+        <div class="backtest-title">📊 バックテスト</div>
+        <div class="bt-stat-cards">
+            ${fmtCard('5d',  '5日')}
+            ${fmtCard('10d', '10日')}
+            ${fmtCard('20d', '20日')}
+        </div>`;
+    el.style.display = 'flex';
 }
 
 function clearDateAndReload() {
@@ -181,8 +221,29 @@ function renderBreakoutCards(stocks) {
         // 週次出来高比率バー（最大4倍 → 100%）
         const volPct = Math.min((s.vol_ratio_5d / 4) * 100, 100).toFixed(0);
 
-        // 6ヶ月チャート SVG
-        const svg = buildChartSVG(s.chart_dates || [], s.chart_prices || [], s.chart_volumes || []);
+        // フォワードリターンバッジ
+        const fmtFwd = (v, label) => {
+            if (v == null) return `<span class="fwd-badge fwd-na">${label}: --</span>`;
+            const cls  = v > 0 ? 'fwd-win' : 'fwd-lose';
+            const sign = v > 0 ? '+' : '';
+            return `<span class="fwd-badge ${cls}">${label}: ${sign}${v.toFixed(1)}%</span>`;
+        };
+        const hasFwd = s.fwd_5d != null || s.fwd_10d != null || s.fwd_20d != null;
+        const fwdHtml = hasFwd
+            ? `<div class="bo-fwd-returns">
+                ${fmtFwd(s.fwd_5d,  '5日後')}
+                ${fmtFwd(s.fwd_10d, '10日後')}
+                ${fmtFwd(s.fwd_20d, '20日後')}
+               </div>`
+            : '';
+
+        // 6ヶ月チャート SVG（シグナル日に縦線）
+        const svg = buildChartSVG(
+            s.chart_dates  || [],
+            s.chart_prices || [],
+            s.chart_volumes || [],
+            s.signal_idx != null ? s.signal_idx : -1
+        );
 
         const cardCls = isTop1 ? 'breakout-card rank-top1'
                       : isTop3 ? 'breakout-card rank-top3'
@@ -210,6 +271,7 @@ function renderBreakoutCards(stocks) {
                 <span class="bo-vol-ratio">×${s.vol_ratio_5d.toFixed(1)}</span>
             </div>
             <div class="bo-chart">${svg}</div>
+            ${fwdHtml}
             <div class="bo-tags">${tagsHtml}</div>
         `;
         grid.appendChild(card);
@@ -222,7 +284,10 @@ function renderBreakoutCards(stocks) {
  * @param {number[]} prices  - 終値配列 (古い順)
  * @param {number[]} volumes - 出来高配列 (古い順)
  */
-function buildChartSVG(dates, prices, volumes) {
+/**
+ * @param {number} signalIdx  - シグナル日のインデックス（-1 なら表示しない）
+ */
+function buildChartSVG(dates, prices, volumes, signalIdx = -1) {
     if (!prices || prices.length < 5) {
         return '<div class="bo-chart-nodata">チャートデータなし</div>';
     }
@@ -295,6 +360,16 @@ function buildChartSVG(dates, prices, volumes) {
     // ── 月ラベル ──
     const monthLabels = buildMonthLabels(dates, n, xOf, vBaseY + GAP + 10);
 
+    // ── シグナル日の縦線（過去日付バックテスト用） ──
+    let signalLine = '';
+    if (signalIdx >= 0 && signalIdx < n) {
+        const sx = xOf(signalIdx).toFixed(1);
+        signalLine = `
+            <line x1="${sx}" y1="2" x2="${sx}" y2="${PH}" stroke="#f59e0b" stroke-width="1.3" stroke-dasharray="3,2" opacity="0.9"/>
+            <line x1="${sx}" y1="${PH + GAP}" x2="${sx}" y2="${vBaseY}" stroke="#f59e0b" stroke-width="1.3" stroke-dasharray="3,2" opacity="0.5"/>
+            <text x="${sx}" y="${(PH - 2).toFixed(1)}" font-size="6.5" fill="#f59e0b" text-anchor="middle" font-weight="700">▼</text>`;
+    }
+
     return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="display:block;width:100%;height:auto">
         ${grid}
         <polygon points="${fillPts}" fill="${fillColor}" opacity="0.2"/>
@@ -302,6 +377,7 @@ function buildChartSVG(dates, prices, volumes) {
         ${ma75svg}
         ${ma25svg}
         <polyline points="${pts}" fill="none" stroke="${lineColor}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+        ${signalLine}
         <circle cx="${lx}" cy="${ly}" r="2.5" fill="${lineColor}"/>
         <text x="${labelX}" y="${yMaxLabel}" font-size="7.5" fill="#64748b" dominant-baseline="middle">${fmtChartPrice(maxP)}</text>
         <text x="${labelX}" y="${yMinLabel}" font-size="7.5" fill="#64748b" dominant-baseline="middle">${fmtChartPrice(minP)}</text>
