@@ -157,12 +157,12 @@
                     <button class="breakout-refresh-btn" id="breakoutRefreshBtn"
                             onclick="clearDateAndReload()">↺ 最新</button>
                 </div>
-                <p class="breakout-sub">出来高比率（今日÷前5日平均）× 株価騰落率でスコアリング。過去の日付を指定すれば遡ってスクリーニング可能。6ヶ月の日足チャート付き。</p>
+                <p class="breakout-sub">直近5日間の平均出来高 ÷ 前6〜20日の平均出来高でスコアリング（週次出来高増加トレンド）。過去の日付を指定すれば遡ってスクリーニング可能。6ヶ月の日足チャート付き。</p>
             </div>
 
             <div class="breakout-loading" id="breakoutLoading">
                 <div class="breakout-spinner"></div>
-                <span>スクリーニング＆チャートデータ取得中...（約20〜30秒）</span>
+                <span>20日分のデータをスキャン＆チャート取得中...（約25〜35秒）</span>
             </div>
             <div class="breakout-error" id="breakoutError" style="display:none;">
                 <span>⚠️ </span><span id="breakoutErrorMsg"></span>

@@ -116,7 +116,7 @@ async function loadBreakoutStocks() {
 
     try {
         const targetDate = targetDateEl ? targetDateEl.value : '';
-        let url = '/api/screening/volume_breakout?days=10&n=20';
+        let url = '/api/screening/volume_breakout?days=20&n=20';
         if (targetDate) url += `&date=${encodeURIComponent(targetDate)}`;
 
         const res  = await fetch(url);
@@ -153,13 +153,13 @@ function renderBreakoutCards(stocks) {
     grid.innerHTML = '';
 
     const tagMap = {
-        '出来高×5↑': 'btag-vol5',  '出来高×3↑': 'btag-vol3',
-        '出来高×2↑': 'btag-vol2',  '出来高増加': 'btag-volinc',
-        '急騰':       'btag-surge', '上昇':       'btag-rising',
-        '堅調':       'btag-steady','5日+20%↑':   'btag-p20',
-        '5日+10%↑':  'btag-p10',  '超大型':     'btag-mega',
-        '大商い':     'btag-large', 'プライム':   'btag-prime',
-        'グロース':   'btag-growth',
+        '週次×4↑':  'btag-vol5',  '週次×3↑':  'btag-vol3',
+        '週次×2↑':  'btag-vol2',  '週次増加':  'btag-volinc',
+        '急騰':      'btag-surge', '上昇':      'btag-rising',
+        '堅調':      'btag-steady','5日+20%↑':  'btag-p20',
+        '5日+10%↑': 'btag-p10',  '超大型':    'btag-mega',
+        '大商い':    'btag-large', 'プライム':  'btag-prime',
+        'グロース':  'btag-growth',
     };
 
     stocks.forEach((s, idx) => {
@@ -178,8 +178,8 @@ function renderBreakoutCards(stocks) {
             `<span class="bo-tag ${tagMap[t] || 'btag-def'}">${escHtml(t)}</span>`
         ).join('');
 
-        // 出来高比率バー（最大5倍 → 100%）
-        const volPct = Math.min((s.vol_ratio_5d / 5) * 100, 100).toFixed(0);
+        // 週次出来高比率バー（最大4倍 → 100%）
+        const volPct = Math.min((s.vol_ratio_5d / 4) * 100, 100).toFixed(0);
 
         // 6ヶ月チャート SVG
         const svg = buildChartSVG(s.chart_dates || [], s.chart_prices || [], s.chart_volumes || []);
@@ -203,7 +203,7 @@ function renderBreakoutCards(stocks) {
                 <span class="bo-change ${crCls}">${crSign}${cr.toFixed(2)}%</span>
             </div>
             <div class="bo-vol-row">
-                <span class="bo-vol-label">出来高比</span>
+                <span class="bo-vol-label">週次比</span>
                 <div class="bo-vol-bar-wrap">
                     <div class="bo-vol-bar" style="width:${volPct}%"></div>
                 </div>

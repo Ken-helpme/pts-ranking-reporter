@@ -371,7 +371,7 @@ class JQuantsClient:
 
     # ========== 出来高急増×上昇トレンド ==========
 
-    def get_volume_breakout_stocks(self, days: int = 10, top_n: int = 20,
+    def get_volume_breakout_stocks(self, days: int = 20, top_n: int = 20,
                                    target_date: Optional[str] = None) -> List[Dict]:
         """
         出来高急増 × 上昇トレンド銘柄を検出
@@ -479,10 +479,17 @@ class JQuantsClient:
             if today_close == 0:
                 continue
 
-            # 出来高比率（今日 ÷ 前5日平均）
-            prev_vols = volumes[-6:-1] if len(volumes) >= 6 else volumes[:-1]
-            avg_vol   = sum(prev_vols) / len(prev_vols) if prev_vols else 1
-            vol_ratio = today_vol / avg_vol if avg_vol > 0 else 0
+            # ── 週次出来高比率（直近5日平均 ÷ 基準期間平均）──
+            # 直近5日の平均
+            recent_vols = volumes[-5:] if len(volumes) >= 5 else volumes
+            recent_avg  = sum(recent_vols) / len(recent_vols) if recent_vols else 0
+            # 基準期間（6〜20日前）の平均 — 十分なデータがない場合は利用可能な分を使う
+            if len(volumes) >= 10:
+                baseline_vols = volumes[-20:-5] if len(volumes) >= 20 else volumes[:-5]
+            else:
+                baseline_vols = volumes[:-1]  # データ不足時は前日までで代用
+            baseline_avg = sum(baseline_vols) / len(baseline_vols) if baseline_vols else recent_avg or 1
+            vol_ratio    = recent_avg / baseline_avg if baseline_avg > 0 else 0
 
             # 株価騰落率
             price_5d_chg  = 0.0
@@ -491,24 +498,26 @@ class JQuantsClient:
                 price_5d_chg  = (today_close - closes[-6]) / closes[-6] * 100
             elif len(closes) >= 2:
                 price_5d_chg  = (today_close - closes[0]) / closes[0] * 100
-            if len(closes) >= days:
-                price_10d_chg = (today_close - closes[0]) / closes[0] * 100
+            if len(closes) >= 10:
+                price_10d_chg = (today_close - closes[-11]) / closes[-11] * 100 \
+                    if len(closes) >= 11 else (today_close - closes[0]) / closes[0] * 100
 
-            # 最低条件: 出来高比率 1.3倍以上 かつ 今日プラス
+            # 当日変化率（表示用）
             today_change = 0.0
             if len(closes) >= 2:
                 prev_close = closes[-2]
                 if prev_close > 0:
                     today_change = (today_close - prev_close) / prev_close * 100
 
-            if vol_ratio < 1.3:
+            # ── フィルター: 週次平均出来高 1.5倍以上 かつ 5日間でプラス ──
+            if vol_ratio < 1.5:
                 continue
-            if today_change <= 0:
+            if price_5d_chg <= 0:          # 週足ベースで上昇していること
                 continue
             if today_turnover < 50_000_000:  # 5000万円未満は除外
                 continue
 
-            # スコア: 出来高比率 × 0.5 + 5日騰落率 × 0.5
+            # スコア: 週次出来高比率 × 0.5 + 5日騰落率 × 0.5
             vol_score   = min(vol_ratio / 5.0, 1.0)
             price_score = min(max(price_5d_chg, 0) / 15.0, 1.0)
             score       = vol_score * 0.5 + price_score * 0.5
@@ -573,16 +582,17 @@ class JQuantsClient:
         # ── 4. タグ付け ──
         for s in top:
             tags = []
-            vr  = s["vol_ratio_5d"]
-            cr  = s["change_rate"]
+            vr  = s["vol_ratio_5d"]   # 週次平均出来高比率
+            cr  = s["change_rate"]    # 当日変化率（表示用）
             va  = s["turnover"]
             mkt = s["market"]
             p5  = s["price_5d_chg"]
 
-            if vr >= 5:   tags.append("出来高×5↑")
-            elif vr >= 3: tags.append("出来高×3↑")
-            elif vr >= 2: tags.append("出来高×2↑")
-            else:         tags.append("出来高増加")
+            # 週次出来高増加の強さ
+            if vr >= 4:   tags.append("週次×4↑")
+            elif vr >= 3: tags.append("週次×3↑")
+            elif vr >= 2: tags.append("週次×2↑")
+            else:         tags.append("週次増加")
 
             if cr >= 10:    tags.append("急騰")
             elif cr >= 5:   tags.append("上昇")
