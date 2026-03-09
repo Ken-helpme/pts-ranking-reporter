@@ -2,6 +2,14 @@
  * 銘柄スクリーニング JavaScript
  */
 
+// ブレイクアウトスクリーナーの現在のフィルターパラメータ
+let currentBreakoutParams = {
+    vol_ratio_min:    1.5,
+    price_5d_chg_min: 0.0,
+    turnover_min:     50_000_000,
+    market:           '',
+};
+
 // 初期化
 document.addEventListener('DOMContentLoaded', () => {
     loadSectors();
@@ -119,6 +127,10 @@ async function loadBreakoutStocks() {
     try {
         const targetDate = targetDateEl ? targetDateEl.value : '';
         let url = '/api/screening/volume_breakout?days=20&n=20';
+        url += `&vol_ratio_min=${currentBreakoutParams.vol_ratio_min}`;
+        url += `&price_5d_chg_min=${currentBreakoutParams.price_5d_chg_min}`;
+        url += `&turnover_min=${currentBreakoutParams.turnover_min}`;
+        if (currentBreakoutParams.market) url += `&market=${encodeURIComponent(currentBreakoutParams.market)}`;
         if (targetDate) url += `&date=${encodeURIComponent(targetDate)}`;
 
         const res  = await fetch(url);
@@ -185,7 +197,156 @@ function renderWinStats(ws) {
 function clearDateAndReload() {
     const el = document.getElementById('breakoutTargetDate');
     if (el) el.value = '';
+    currentBreakoutParams = { vol_ratio_min: 1.5, price_5d_chg_min: 0.0, turnover_min: 50_000_000, market: '' };
+    const lbl = document.getElementById('appliedParamsLabel');
+    if (lbl) lbl.style.display = 'none';
     loadBreakoutStocks();
+}
+
+/* ============================================================
+   自動最適化
+   ============================================================ */
+
+async function runOptimization() {
+    const btn       = document.getElementById('optimizeBtn');
+    const panel     = document.getElementById('optimizePanel');
+    const loading   = document.getElementById('optimizeLoading');
+    const results   = document.getElementById('optimizeResults');
+    const msgEl     = document.getElementById('optimizeLoadingMsg');
+    const dateEl    = document.getElementById('breakoutTargetDate');
+
+    // テスト日: 日付ピッカーが空なら60日前をデフォルト
+    let testDate = dateEl ? dateEl.value : '';
+    if (!testDate) {
+        const d = new Date();
+        d.setDate(d.getDate() - 60);
+        testDate = d.toISOString().slice(0, 10);
+        if (dateEl) dateEl.value = testDate;
+    }
+
+    btn.disabled = true;
+    panel.style.display = 'block';
+    loading.style.display = 'flex';
+    results.innerHTML = '';
+    if (msgEl) msgEl.textContent = `${testDate} 前後 × 128条件をテスト中...（約10〜20秒）`;
+
+    try {
+        const url  = `/api/screening/optimize?date=${encodeURIComponent(testDate)}&multi=true`;
+        const res  = await fetch(url);
+        const data = await res.json();
+        renderOptimizeResults(data);
+    } catch (e) {
+        results.innerHTML = `<div class="optimize-error">通信エラー: ${escHtml(e.message)}</div>`;
+    } finally {
+        loading.style.display = 'none';
+        btn.disabled = false;
+    }
+}
+
+function fmtTurnoverLabel(val) {
+    if (val >= 1_000_000_000) return (val / 100_000_000).toFixed(0) + '億円';
+    if (val >= 100_000_000)   return (val / 100_000_000).toFixed(1) + '億円';
+    if (val >= 10_000_000)    return (val / 10_000_000).toFixed(0) + '000万円';
+    return (val / 10_000).toFixed(0) + '万円';
+}
+
+function fmtParamsSummary(c) {
+    const mkt = c.market ? ` ${c.market}` : '';
+    return `週比≥${c.vol_ratio_min}× ｜ 5日≥${c.price_5d_chg_min}% ｜ 代金≥${fmtTurnoverLabel(c.min_turnover)}${mkt}`;
+}
+
+function renderOptimizeResults(data) {
+    const el = document.getElementById('optimizeResults');
+    if (!el) return;
+
+    if (!data.success) {
+        el.innerHTML = `<div class="optimize-error">⚠️ ${escHtml(data.error || '最適化に失敗しました')}</div>`;
+        return;
+    }
+
+    const combos = data.combinations || [];
+    const best   = data.best_20d;
+
+    let html = `<div class="optimize-summary">
+        ✅ ${data.test_dates.length}日間 × ${data.total_combinations}条件テスト完了
+        <span class="optimize-time">${data.total_time}s</span>
+        <span style="font-size:11px;color:#64748b;font-weight:400;">（${data.test_dates[0] || ''}〜${data.test_dates[data.test_dates.length-1] || ''}）</span>
+    </div>`;
+
+    if (best) {
+        // window._bestParams に格納してボタン onclick から参照
+        window._optimizeBestParams = best;
+        html += `<div class="optimize-best">
+            <span class="optimize-best-label">🏆 推薦条件</span>
+            <span class="optimize-best-params">${escHtml(fmtParamsSummary(best))}</span>
+            <span style="font-size:11px;color:#64748b;">20日勝率 ${best.win_rate_20d != null ? best.win_rate_20d + '%' : '--'} / 平均 ${best.avg_return_20d != null ? (best.avg_return_20d > 0 ? '+' : '') + best.avg_return_20d + '%' : '--'}</span>
+            <button class="optimize-apply-best-btn" onclick="applyOptimizeParams(window._optimizeBestParams)">この条件を適用</button>
+        </div>`;
+    }
+
+    html += `<div class="optimize-table-wrap"><table class="optimize-table">
+        <thead><tr>
+            <th>#</th>
+            <th>条件</th>
+            <th>銘柄数</th>
+            <th>5日勝率</th>
+            <th>10日勝率</th>
+            <th>20日勝率</th>
+            <th>20日平均</th>
+            <th></th>
+        </tr></thead>
+        <tbody>`;
+
+    combos.slice(0, 15).forEach((c, i) => {
+        const wr20cls = (c.win_rate_20d || 0) >= 60 ? 'opt-wr-good'
+                      : (c.win_rate_20d || 0) >= 50 ? 'opt-wr-mid' : 'opt-wr-poor';
+        const ar20 = c.avg_return_20d != null
+            ? `${c.avg_return_20d > 0 ? '+' : ''}${c.avg_return_20d}%` : '--';
+        const rowCls = i === 0 ? ' class="opt-best-row"' : '';
+        const paramsSafe = JSON.stringify(c).replace(/'/g, "\\'");
+        html += `<tr${rowCls}>
+            <td>${i + 1}</td>
+            <td class="opt-params">${escHtml(fmtParamsSummary(c))}</td>
+            <td>${c.avg_picks}</td>
+            <td>${c.win_rate_5d  != null ? c.win_rate_5d  + '%' : '--'}</td>
+            <td>${c.win_rate_10d != null ? c.win_rate_10d + '%' : '--'}</td>
+            <td class="${wr20cls}">${c.win_rate_20d != null ? c.win_rate_20d + '%' : '--'}</td>
+            <td>${ar20}</td>
+            <td><button class="opt-apply-btn" onclick='applyOptimizeParams(${paramsSafe})'>適用</button></td>
+        </tr>`;
+    });
+
+    html += '</tbody></table></div>';
+    el.innerHTML = html;
+}
+
+function applyOptimizeParams(params) {
+    currentBreakoutParams = {
+        vol_ratio_min:    params.vol_ratio_min,
+        price_5d_chg_min: params.price_5d_chg_min,
+        turnover_min:     params.min_turnover,
+        market:           params.market || '',
+    };
+
+    // 適用中ラベル更新
+    const lbl = document.getElementById('appliedParamsLabel');
+    if (lbl) {
+        lbl.textContent = `✅ 適用中: ${fmtParamsSummary(params)}`;
+        lbl.style.display = 'inline-flex';
+    }
+
+    // 最適化パネルを閉じる
+    const panel = document.getElementById('optimizePanel');
+    if (panel) panel.style.display = 'none';
+
+    // 新しい条件でリロード
+    loadBreakoutStocks();
+
+    // ブレイクアウトセクションへスクロール
+    setTimeout(() => {
+        document.getElementById('breakoutSection')
+            .scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 200);
 }
 
 function renderBreakoutCards(stocks) {

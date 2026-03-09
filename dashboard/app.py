@@ -334,15 +334,37 @@ def screening_search():
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})
 
+@app.route('/api/screening/optimize')
+def screening_optimize():
+    """パラメータ自動最適化（バックテストグリッドサーチ）"""
+    try:
+        test_date = request.args.get('date', '')
+        multi     = request.args.get('multi', 'true').lower() == 'true'
+        if not test_date:
+            return jsonify({'success': False, 'error': 'date パラメータが必要です'})
+        result = jquants.run_backtest_optimization(test_date, multi_date=multi)
+        return jsonify(result)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
 @app.route('/api/screening/volume_breakout')
 def screening_volume_breakout():
     """出来高急増×上昇トレンド銘柄"""
     try:
-        days        = request.args.get('days', 10, type=int)
-        top_n       = request.args.get('n', 20, type=int)
-        target_date = request.args.get('date', None)
-        stocks = jquants.get_volume_breakout_stocks(days=days, top_n=top_n,
-                                                    target_date=target_date)
+        days             = request.args.get('days', 10, type=int)
+        top_n            = request.args.get('n', 20, type=int)
+        target_date      = request.args.get('date', None)
+        vol_ratio_min    = request.args.get('vol_ratio_min', 1.5, type=float)
+        price_5d_chg_min = request.args.get('price_5d_chg_min', 0.0, type=float)
+        turnover_min     = request.args.get('turnover_min', 50_000_000, type=int)
+        market_filter    = request.args.get('market', '')
+        stocks = jquants.get_volume_breakout_stocks(
+            days=days, top_n=top_n, target_date=target_date,
+            vol_ratio_min=vol_ratio_min, price_5d_chg_min=price_5d_chg_min,
+            turnover_min=turnover_min, market=market_filter,
+        )
         date = stocks[0]['date'] if stocks else ''
 
         # ── バックテスト勝率集計 ──
