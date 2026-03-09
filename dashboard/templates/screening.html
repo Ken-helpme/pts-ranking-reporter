@@ -138,22 +138,31 @@
         </div>
     </div>
 
-    <!-- 出来高急増×上昇トレンド -->
+    <!-- 出来高急増×上昇トレンド + 過去日付ルックバック -->
     <div class="breakout-section" id="breakoutSection">
         <div class="breakout-container">
             <div class="breakout-header">
                 <div class="breakout-title-row">
                     <span class="breakout-icon">📈</span>
                     <h2>出来高急増 × 上昇トレンド</h2>
-                    <span class="breakout-badge" id="breakoutDate"></span>
-                    <button class="breakout-refresh-btn" id="breakoutRefreshBtn" onclick="loadBreakoutStocks()">↺ 更新</button>
+                    <span class="breakout-badge" id="breakoutDateBadge"></span>
                 </div>
-                <p class="breakout-sub">出来高比率（今日÷前5日平均）× 株価騰落率でスコアリング。直近10日のミニチャート付き。</p>
+                <div class="breakout-ctrl-row">
+                    <div class="breakout-date-ctrl">
+                        <label class="bo-date-label">対象日</label>
+                        <input type="date" id="breakoutTargetDate" class="bo-date-input"
+                               max="2026-03-09">
+                        <button class="breakout-apply-btn" onclick="loadBreakoutStocks()">適用</button>
+                    </div>
+                    <button class="breakout-refresh-btn" id="breakoutRefreshBtn"
+                            onclick="clearDateAndReload()">↺ 最新</button>
+                </div>
+                <p class="breakout-sub">出来高比率（今日÷前5日平均）× 株価騰落率でスコアリング。過去の日付を指定すれば遡ってスクリーニング可能。6ヶ月の日足チャート付き。</p>
             </div>
 
             <div class="breakout-loading" id="breakoutLoading">
                 <div class="breakout-spinner"></div>
-                <span>10日分のデータを取得中...（約15〜25秒）</span>
+                <span>スクリーニング＆チャートデータ取得中...（約20〜30秒）</span>
             </div>
             <div class="breakout-error" id="breakoutError" style="display:none;">
                 <span>⚠️ </span><span id="breakoutErrorMsg"></span>

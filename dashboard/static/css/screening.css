@@ -859,8 +859,63 @@
 .breakout-sub {
     font-size: 12px;
     color: #94a3b8;
-    margin-left: 32px;
+    margin-top: 6px;
 }
+
+/* 対象日コントロール行 */
+.breakout-ctrl-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
+
+.breakout-date-ctrl {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.bo-date-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #64748b;
+    white-space: nowrap;
+}
+
+.bo-date-input {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    color: #1e293b;
+    padding: 5px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: 'Inter', 'Noto Sans JP', sans-serif;
+    transition: border-color 0.15s ease;
+}
+
+.bo-date-input:focus {
+    outline: none;
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+}
+
+.breakout-apply-btn {
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    padding: 5px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: 'Inter', 'Noto Sans JP', sans-serif;
+    transition: background 0.15s ease;
+    white-space: nowrap;
+}
+
+.breakout-apply-btn:hover { background: #1d4ed8; }
 
 .breakout-loading {
     display: flex;
@@ -893,13 +948,12 @@
 /* グリッド */
 .breakout-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 12px;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
     margin-bottom: 10px;
 }
-@media (max-width: 1100px) { .breakout-grid { grid-template-columns: repeat(3, 1fr); } }
-@media (max-width: 800px)  { .breakout-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 500px)  { .breakout-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1050px) { .breakout-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 700px)  { .breakout-grid { grid-template-columns: 1fr; } }
 
 /* ブレイクアウトカード */
 .breakout-card {
@@ -1019,15 +1073,27 @@
     text-align: right;
 }
 
-/* スパークライン */
-.bo-sparkline {
-    margin-bottom: 8px;
+/* 6ヶ月チャート */
+.bo-chart {
+    margin: 8px 0;
     line-height: 0;
+    border-radius: 4px;
+    overflow: hidden;
+    background: #fafafa;
 }
-.bo-sparkline svg {
+.bo-chart svg {
     display: block;
     width: 100%;
     height: auto;
+}
+.bo-chart-nodata {
+    color: #94a3b8;
+    font-size: 11px;
+    text-align: center;
+    padding: 24px 0;
+    background: #f8fafc;
+    border-radius: 4px;
+    margin: 8px 0;
 }
 
 /* タグ */

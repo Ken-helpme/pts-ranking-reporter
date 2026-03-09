@@ -101,12 +101,13 @@ function renderPickCards(picks) {
    ============================================================ */
 
 async function loadBreakoutStocks() {
-    const grid    = document.getElementById('breakoutGrid');
-    const loading = document.getElementById('breakoutLoading');
-    const errEl   = document.getElementById('breakoutError');
-    const errMsg  = document.getElementById('breakoutErrorMsg');
-    const dateEl  = document.getElementById('breakoutDate');
-    const btn     = document.getElementById('breakoutRefreshBtn');
+    const grid         = document.getElementById('breakoutGrid');
+    const loading      = document.getElementById('breakoutLoading');
+    const errEl        = document.getElementById('breakoutError');
+    const errMsg       = document.getElementById('breakoutErrorMsg');
+    const dateEl       = document.getElementById('breakoutDateBadge');
+    const btn          = document.getElementById('breakoutRefreshBtn');
+    const targetDateEl = document.getElementById('breakoutTargetDate');
 
     loading.style.display = 'flex';
     grid.style.display    = 'none';
@@ -114,11 +115,18 @@ async function loadBreakoutStocks() {
     if (btn) btn.disabled = true;
 
     try {
-        const res  = await fetch('/api/screening/volume_breakout?days=10&n=20');
+        const targetDate = targetDateEl ? targetDateEl.value : '';
+        let url = '/api/screening/volume_breakout?days=10&n=20';
+        if (targetDate) url += `&date=${encodeURIComponent(targetDate)}`;
+
+        const res  = await fetch(url);
         const data = await res.json();
 
         if (data.success && data.stocks && data.stocks.length > 0) {
-            dateEl.textContent = data.date ? `📅 ${data.date} 終値ベース` : '';
+            const label = targetDate
+                ? `📅 ${targetDate} 基準`
+                : (data.date ? `📅 ${data.date} 終値ベース` : '');
+            dateEl.textContent = label;
             renderBreakoutCards(data.stocks);
             grid.style.display = 'grid';
         } else {
@@ -132,6 +140,12 @@ async function loadBreakoutStocks() {
         loading.style.display = 'none';
         if (btn) btn.disabled = false;
     }
+}
+
+function clearDateAndReload() {
+    const el = document.getElementById('breakoutTargetDate');
+    if (el) el.value = '';
+    loadBreakoutStocks();
 }
 
 function renderBreakoutCards(stocks) {
@@ -167,8 +181,8 @@ function renderBreakoutCards(stocks) {
         // 出来高比率バー（最大5倍 → 100%）
         const volPct = Math.min((s.vol_ratio_5d / 5) * 100, 100).toFixed(0);
 
-        // スパークライン SVG
-        const svg = buildSparklineSVG(s.sparkline_prices || [], s.sparkline_volumes || []);
+        // 6ヶ月チャート SVG
+        const svg = buildChartSVG(s.chart_dates || [], s.chart_prices || [], s.chart_volumes || []);
 
         const cardCls = isTop1 ? 'breakout-card rank-top1'
                       : isTop3 ? 'breakout-card rank-top3'
@@ -195,7 +209,7 @@ function renderBreakoutCards(stocks) {
                 </div>
                 <span class="bo-vol-ratio">×${s.vol_ratio_5d.toFixed(1)}</span>
             </div>
-            <div class="bo-sparkline">${svg}</div>
+            <div class="bo-chart">${svg}</div>
             <div class="bo-tags">${tagsHtml}</div>
         `;
         grid.appendChild(card);
@@ -203,60 +217,156 @@ function renderBreakoutCards(stocks) {
 }
 
 /**
- * 価格+出来高スパークライン SVG を生成
- * @param {number[]} prices  - 古い順の終値配列
- * @param {number[]} volumes - 古い順の出来高配列
+ * 6ヶ月日足チャート SVG を生成（価格ライン + MA25/75 + 出来高バー + 月ラベル）
+ * @param {string[]} dates   - 日付配列 (YYYY-MM-DD、古い順)
+ * @param {number[]} prices  - 終値配列 (古い順)
+ * @param {number[]} volumes - 出来高配列 (古い順)
  */
-function buildSparklineSVG(prices, volumes) {
-    if (!prices.length) return '';
+function buildChartSVG(dates, prices, volumes) {
+    if (!prices || prices.length < 5) {
+        return '<div class="bo-chart-nodata">チャートデータなし</div>';
+    }
 
-    const W  = 160, PH = 44, VH = 16, GAP = 3;
-    const H  = PH + GAP + VH;
-    const n  = prices.length;
+    // ── レイアウト定数 ──
+    const W    = 300;   // SVG 全幅
+    const PH   = 115;   // 価格エリア高さ
+    const VH   = 36;    // 出来高エリア高さ
+    const GAP  = 4;     // 価格↔出来高 隙間
+    const ML   = 14;    // 月ラベル高さ
+    const H    = PH + GAP + VH + GAP + ML;
+    const PL   = 4;     // 左パディング
+    const PR   = 50;    // 右パディング（価格ラベル用）
+    const cW   = W - PL - PR;  // チャート描画幅
 
-    const maxP = Math.max(...prices);
-    const minP = Math.min(...prices);
-    const rangeP = maxP - minP || 1;
-    const maxV   = Math.max(...volumes) || 1;
+    const n     = prices.length;
+    const maxP  = Math.max(...prices);
+    const minP  = Math.min(...prices);
+    const rangeP = maxP - minP || maxP * 0.05 || 1;
+    const maxV  = Math.max(...volumes) || 1;
 
-    const xOf = i => (i / Math.max(n - 1, 1)) * W;
-    const yOfP = p => PH - 4 - ((p - minP) / rangeP) * (PH - 8);
+    const xOf  = i => PL + (i / Math.max(n - 1, 1)) * cW;
+    const yOfP = p => 2 + (PH - 4) * (1 - (p - minP) / rangeP);
 
-    // 価格ライン
-    const pts = prices.map((p, i) => `${xOf(i).toFixed(1)},${yOfP(p).toFixed(1)}`).join(' ');
+    // ── MA計算 ──
+    const ma25 = calcMA(prices, 25);
+    const ma75 = calcMA(prices, 75);
 
-    // 塗りつぶしグラデーション（ラインの下）
-    const fillPts = `0,${PH} ` + pts + ` ${W},${PH}`;
+    // ── 価格ライン ──
+    const pts     = prices.map((p, i) => `${xOf(i).toFixed(1)},${yOfP(p).toFixed(1)}`).join(' ');
+    const fillPts = `${PL},${PH - 2} ` + pts + ` ${(PL + cW).toFixed(1)},${PH - 2}`;
 
-    // 出来高バー
-    const bw = Math.max(W / n - 1.5, 1);
-    const bars = volumes.map((v, i) => {
-        const bh = Math.max((v / maxV) * (VH - 2), 1);
-        const bx = xOf(i) - bw / 2;
-        const by = PH + GAP + VH - bh;
-        // 今日（最後）のバーは赤系、過去は青系
-        const fill = i === n - 1 ? '#2563eb' : '#93c5fd';
-        return `<rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" fill="${fill}" opacity="0.7" rx="1"/>`;
+    const rising    = prices[n - 1] >= prices[0];
+    const lineColor = rising ? '#2563eb' : '#dc2626';
+    const fillColor = rising ? '#dbeafe' : '#fee2e2';
+
+    // ── 出来高バー ──
+    const vBaseY = PH + GAP + VH;
+    const bw     = Math.max((cW / n) * 0.82, 0.8);
+    const bars   = volumes.map((v, i) => {
+        const bh   = Math.max((v / maxV) * (VH - 1), 0.8);
+        const bx   = xOf(i) - bw / 2;
+        const by   = vBaseY - bh;
+        const fill = i === n - 1 ? '#3b82f6' : '#c7d8ed';
+        return `<rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" fill="${fill}"/>`;
     }).join('');
 
-    // ラスト価格の円
+    // ── 水平グリッド ──
+    const grid = [0.25, 0.5, 0.75].map(f => {
+        const y = yOfP(minP + rangeP * f).toFixed(1);
+        return `<line x1="${PL}" y1="${y}" x2="${(PL + cW).toFixed(1)}" y2="${y}" stroke="#f0f4f8" stroke-width="0.8"/>`;
+    }).join('');
+
+    // ── MA ポリライン ──
+    const ma25svg = buildMAPolyline(ma25, xOf, yOfP, '#f97316', 0.85);
+    const ma75svg = buildMAPolyline(ma75, xOf, yOfP, '#60a5fa', 0.85);
+
+    // ── 価格ラベル（右端） ──
+    const labelX    = (PL + cW + 4).toFixed(1);
+    const yMaxLabel = Math.max(yOfP(maxP), 8).toFixed(1);
+    const yMinLabel = Math.min(yOfP(minP), PH - 4).toFixed(1);
+
+    // ── 最新価格ドット ──
     const lx = xOf(n - 1).toFixed(1);
     const ly = yOfP(prices[n - 1]).toFixed(1);
-    const lineColor = prices[n - 1] >= prices[0] ? '#2563eb' : '#dc2626';
-    const areaColor = prices[n - 1] >= prices[0] ? '#dbeafe' : '#fee2e2';
 
-    return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="overflow:visible">
-        <defs>
-            <linearGradient id="sg_${Date.now()}_${Math.random().toString(36).slice(2)}" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="${areaColor}" stop-opacity="0.8"/>
-                <stop offset="100%" stop-color="${areaColor}" stop-opacity="0"/>
-            </linearGradient>
-        </defs>
-        <polygon points="${fillPts}" fill="${areaColor}" opacity="0.35"/>
+    // ── MA凡例 ──
+    const legendY = (PH + GAP + VH + GAP + ML - 1).toFixed(1);
+
+    // ── 月ラベル ──
+    const monthLabels = buildMonthLabels(dates, n, xOf, vBaseY + GAP + 10);
+
+    return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="display:block;width:100%;height:auto">
+        ${grid}
+        <polygon points="${fillPts}" fill="${fillColor}" opacity="0.2"/>
         ${bars}
+        ${ma75svg}
+        ${ma25svg}
         <polyline points="${pts}" fill="none" stroke="${lineColor}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
         <circle cx="${lx}" cy="${ly}" r="2.5" fill="${lineColor}"/>
+        <text x="${labelX}" y="${yMaxLabel}" font-size="7.5" fill="#64748b" dominant-baseline="middle">${fmtChartPrice(maxP)}</text>
+        <text x="${labelX}" y="${yMinLabel}" font-size="7.5" fill="#64748b" dominant-baseline="middle">${fmtChartPrice(minP)}</text>
+        <rect x="${PL}" y="${PH + GAP - 0.5}" width="${cW}" height="0.5" fill="#e2e8f0"/>
+        ${monthLabels}
+        <line x1="${(PL + cW + 2).toFixed(1)}" y1="7" x2="${(PL + cW + 7).toFixed(1)}" y2="7" stroke="#f97316" stroke-width="1.5"/>
+        <text x="${(PL + cW + 9).toFixed(1)}" y="7" font-size="6.5" fill="#f97316" dominant-baseline="middle">25</text>
+        <line x1="${(PL + cW + 2).toFixed(1)}" y1="16" x2="${(PL + cW + 7).toFixed(1)}" y2="16" stroke="#60a5fa" stroke-width="1.5"/>
+        <text x="${(PL + cW + 9).toFixed(1)}" y="16" font-size="6.5" fill="#60a5fa" dominant-baseline="middle">75</text>
     </svg>`;
+}
+
+/** 移動平均を計算 */
+function calcMA(prices, period) {
+    return prices.map((_, i) => {
+        if (i < period - 1) return null;
+        let sum = 0;
+        for (let j = i - period + 1; j <= i; j++) sum += prices[j];
+        return sum / period;
+    });
+}
+
+/** MA用ポリライン SVG（null で分断） */
+function buildMAPolyline(ma, xOf, yOfP, color, opacity) {
+    const segs = [];
+    let pts    = [];
+    ma.forEach((m, i) => {
+        if (m != null) {
+            pts.push(`${xOf(i).toFixed(1)},${yOfP(m).toFixed(1)}`);
+        } else {
+            if (pts.length > 1) segs.push(pts.join(' '));
+            pts = [];
+        }
+    });
+    if (pts.length > 1) segs.push(pts.join(' '));
+    return segs.map(p =>
+        `<polyline points="${p}" fill="none" stroke="${color}" stroke-width="1" opacity="${opacity}" stroke-linejoin="round"/>`
+    ).join('');
+}
+
+/** 価格ラベルフォーマット */
+function fmtChartPrice(p) {
+    if (p >= 100000) return (p / 10000).toFixed(0) + '万';
+    if (p >= 10000)  return (p / 1000).toFixed(1) + 'k';
+    return Number(p).toFixed(0);
+}
+
+/** X軸の月ラベル SVG */
+function buildMonthLabels(dates, n, xOf, labelY) {
+    if (!dates || dates.length !== n) return '';
+    let labels  = '';
+    let lastYM  = '';
+    dates.forEach((d, i) => {
+        if (!d) return;
+        const ym = d.substring(0, 7);
+        if (ym !== lastYM) {
+            const x  = xOf(i).toFixed(1);
+            const mm = parseInt(d.substring(5, 7), 10);
+            const yy = d.substring(2, 4);
+            const label = mm === 1 ? `'${yy}年` : `${mm}月`;
+            labels += `<text x="${x}" y="${labelY.toFixed ? labelY.toFixed(1) : labelY}" font-size="7.5" fill="#94a3b8" text-anchor="middle">${label}</text>`;
+            lastYM = ym;
+        }
+    });
+    return labels;
 }
 
 /**

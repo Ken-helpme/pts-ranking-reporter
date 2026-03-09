@@ -338,9 +338,11 @@ def screening_search():
 def screening_volume_breakout():
     """出来高急増×上昇トレンド銘柄"""
     try:
-        days  = request.args.get('days', 10, type=int)
-        top_n = request.args.get('n', 20, type=int)
-        stocks = jquants.get_volume_breakout_stocks(days=days, top_n=top_n)
+        days        = request.args.get('days', 10, type=int)
+        top_n       = request.args.get('n', 20, type=int)
+        target_date = request.args.get('date', None)
+        stocks = jquants.get_volume_breakout_stocks(days=days, top_n=top_n,
+                                                    target_date=target_date)
         date = stocks[0]['date'] if stocks else ''
         return jsonify({
             'success': True,

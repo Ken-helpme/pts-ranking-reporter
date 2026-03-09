@@ -371,21 +371,28 @@ class JQuantsClient:
 
     # ========== 出来高急増×上昇トレンド ==========
 
-    def get_volume_breakout_stocks(self, days: int = 10, top_n: int = 20) -> List[Dict]:
+    def get_volume_breakout_stocks(self, days: int = 10, top_n: int = 20,
+                                   target_date: Optional[str] = None) -> List[Dict]:
         """
         出来高急増 × 上昇トレンド銘柄を検出
 
         - 過去 days 日分の株価データを並列取得
-        - 出来高比率（今日 ÷ 前5日平均）と株価騰落率でスコアリング
-        - 各銘柄にスパークライン用データ（直近10日の終値・出来高）を付与
+        - 出来高比率（対象日 ÷ 前5日平均）と株価騰落率でスコアリング
+        - 上位銘柄の6ヶ月日足チャートデータを並列取得して付与
+
+        Args:
+            days:        スコアリング用ルックバック日数
+            top_n:       上位N銘柄を返す
+            target_date: 対象基準日 (YYYY-MM-DD)。None=最新取引日
 
         Returns:
             List[Dict] with extra fields:
                 vol_ratio_5d   : 今日出来高 ÷ 前5日平均出来高
                 price_5d_chg   : 5日間株価騰落率(%)
                 price_10d_chg  : 10日間株価騰落率(%)
-                sparkline_prices  : 直近days日の終値リスト（古い順）
-                sparkline_volumes : 直近days日の出来高リスト（古い順）
+                chart_dates    : 過去6ヶ月の日付リスト (YYYY-MM-DD)
+                chart_prices   : 過去6ヶ月の終値リスト
+                chart_volumes  : 過去6ヶ月の出来高リスト
                 tags           : 特徴タグリスト
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -401,10 +408,14 @@ class JQuantsClient:
             if item.get("MktNm") != "TOKYO PRO MARKET"
         }
 
-        # ── 1. 過去 days+5 営業日候補を並列フェッチ ──
-        today = datetime.now()
+        # ── 1. 過去 days+10 営業日候補を並列フェッチ ──
+        if target_date:
+            base = datetime.strptime(target_date, "%Y-%m-%d")
+        else:
+            base = datetime.now()
+
         candidate_dates = [
-            (today - timedelta(days=i)).strftime("%Y-%m-%d")
+            (base - timedelta(days=i)).strftime("%Y-%m-%d")
             for i in range(0, days + 10)
         ]
 
@@ -431,7 +442,7 @@ class JQuantsClient:
 
         # 直近 days 日分に絞る
         trading_days = trading_days[:days]
-        today_date   = trading_days[0]   # 最新取引日
+        today_date   = trading_days[0]   # 最新（or 対象）取引日
         today_prices = date_data[today_date]
 
         # ── 2. 銘柄ごとに指標を計算 ──
@@ -461,8 +472,8 @@ class JQuantsClient:
             closes  = list(reversed(closes))
             volumes = list(reversed(volumes))
 
-            today_close  = closes[-1]
-            today_vol    = volumes[-1]
+            today_close    = closes[-1]
+            today_vol      = volumes[-1]
             today_turnover = today_prices[code].get("Va") or 0
 
             if today_close == 0:
@@ -484,7 +495,6 @@ class JQuantsClient:
                 price_10d_chg = (today_close - closes[0]) / closes[0] * 100
 
             # 最低条件: 出来高比率 1.3倍以上 かつ 今日プラス
-            today_p = today_prices[code]
             today_change = 0.0
             if len(closes) >= 2:
                 prev_close = closes[-2]
@@ -505,21 +515,20 @@ class JQuantsClient:
 
             m = master_dict.get(code, {})
             results.append({
-                "code":             self._normalize_code(code),
-                "name":             m.get("CoName", ""),
-                "market":           m.get("MktNm", ""),
-                "sector":           m.get("S33Nm", ""),
-                "date":             today_date,
-                "close":            today_close,
-                "volume":           today_vol,
-                "turnover":         today_turnover,
-                "change_rate":      round(today_change, 2),
-                "vol_ratio_5d":     round(vol_ratio, 2),
-                "price_5d_chg":     round(price_5d_chg, 2),
-                "price_10d_chg":    round(price_10d_chg, 2),
-                "sparkline_prices":  closes,
-                "sparkline_volumes": volumes,
-                "_score":            score,
+                "code":           self._normalize_code(code),
+                "_raw_code":      code,   # 5桁コード（チャートデータ取得用）
+                "name":           m.get("CoName", ""),
+                "market":         m.get("MktNm", ""),
+                "sector":         m.get("S33Nm", ""),
+                "date":           today_date,
+                "close":          today_close,
+                "volume":         today_vol,
+                "turnover":       today_turnover,
+                "change_rate":    round(today_change, 2),
+                "vol_ratio_5d":   round(vol_ratio, 2),
+                "price_5d_chg":   round(price_5d_chg, 2),
+                "price_10d_chg":  round(price_10d_chg, 2),
+                "_score":         score,
             })
 
         if not results:
@@ -528,7 +537,40 @@ class JQuantsClient:
         results.sort(key=lambda x: x["_score"], reverse=True)
         top = results[:top_n]
 
-        # ── 3. タグ付け ──
+        # ── 3. 上位銘柄の6ヶ月チャートデータを並列取得 ──
+        today_dt   = datetime.strptime(today_date, "%Y-%m-%d")
+        chart_to   = today_date
+        chart_from = (today_dt - timedelta(days=185)).strftime("%Y-%m-%d")
+
+        def fetch_chart(s):
+            raw_code = s.pop("_raw_code", None)
+            if not raw_code:
+                raw_code = s["code"] + "0" if len(s["code"]) == 4 else s["code"]
+            try:
+                price_data = self.get_prices(raw_code, chart_from, chart_to)
+                if price_data:
+                    valid = [
+                        (p.get("Date", ""),
+                         p.get("AdjC") or p.get("C"),
+                         p.get("AdjVo") or p.get("Vo") or 0)
+                        for p in price_data
+                        if (p.get("AdjC") or p.get("C"))
+                    ]
+                    if valid:
+                        dates, prices, vols = zip(*valid)
+                        s["chart_dates"]   = list(dates)
+                        s["chart_prices"]  = list(prices)
+                        s["chart_volumes"] = list(vols)
+                        return
+                s["chart_dates"] = s["chart_prices"] = s["chart_volumes"] = []
+            except Exception as e:
+                logger.warning(f"チャートデータ取得失敗 {raw_code}: {e}")
+                s["chart_dates"] = s["chart_prices"] = s["chart_volumes"] = []
+
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            list(ex.map(fetch_chart, top))
+
+        # ── 4. タグ付け ──
         for s in top:
             tags = []
             vr  = s["vol_ratio_5d"]
