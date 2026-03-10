@@ -43,7 +43,7 @@ jobs:
             --project=${{ env.PROJECT_ID }} \
             --allow-unauthenticated \
             --ingress=all \
-            --memory=512Mi \
+            --memory=1Gi \
             --timeout=300 \
             --set-env-vars="PYTHONPATH=/app/src,ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }},JQUANTS_API_KEY=${{ secrets.JQUANTS_API_KEY }}" \
             --quiet

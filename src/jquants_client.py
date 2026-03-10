@@ -949,7 +949,17 @@ class JQuantsClient:
         def _fetch(date):
             data = self._fetch_prices_for_date(date)
             if data and len(data) > 100:
-                return date, {p['Code']: p for p in data}
+                # 必要な3フィールドのみ保持してメモリを削減（全フィールド保持だと270MB超になる）
+                return date, {
+                    p['Code']: {
+                        'AdjC': p.get('AdjC'),
+                        'C':    p.get('C'),
+                        'AdjVo': p.get('AdjVo'),
+                        'Vo':   p.get('Vo'),
+                        'Va':   p.get('Va'),
+                    }
+                    for p in data
+                }
             return date, None
 
         # max_workers=4 に抑えてレート制限を回避
