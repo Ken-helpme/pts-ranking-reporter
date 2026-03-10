@@ -10,7 +10,7 @@ import os
 # Add parent directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from models import init_db, save_pts_data, get_latest_ranking, get_historical_data, get_statistics, save_trending_stocks, get_trending_stocks, get_trending_dates, save_optimization_result, get_latest_optimization
+from models import init_db, save_pts_data, get_latest_ranking, get_historical_data, get_statistics, save_trending_stocks, get_trending_stocks, get_trending_dates, save_optimization_result, get_latest_optimization, save_auto_optimization_log, get_auto_optimization_history
 from trending_stock_fetcher import TrendingStockFetcher
 from scraper import KabutanScraper
 from analyzer import PTSAnalyzer
@@ -552,6 +552,105 @@ def screening_save_best_params():
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/screening/optimization_history')
+def screening_optimization_history():
+    """自動最適化の実行履歴を返す（グラフ表示用）"""
+    try:
+        history = get_auto_optimization_history(limit=100)
+        return jsonify({'success': True, 'history': history})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/screening/run_auto_optimize', methods=['POST'])
+def screening_run_auto_optimize():
+    """手動で自動最適化を今すぐ実行（cronと同じロジック）"""
+    try:
+        body         = request.get_json(silent=True) or {}
+        lookback     = body.get('lookback', 52)
+        n_trials     = body.get('n', 5000)
+        dry_run      = body.get('dry_run', False)
+
+        current      = get_latest_optimization()
+        current_score    = current['score']        if current else 0.0
+        current_win_rate = current['win_rate_20d'] if current else 0.0
+        current_params   = current['best_params']  if current else None
+
+        step   = 4 if lookback >= 52 else 2
+        result = jquants.run_large_scale_optimization(
+            lookback_weeks=lookback,
+            step_weeks=step,
+            n_trials=n_trials,
+            base_params=current_params,
+        )
+
+        if not result.get('success'):
+            msg = result.get('error', '最適化失敗')
+            save_auto_optimization_log(
+                improved=False, prev_score=current_score, new_score=current_score,
+                prev_win_rate=current_win_rate, new_win_rate=current_win_rate,
+                best_params=current_params or {}, lookback_weeks=lookback,
+                test_dates=[], note=msg,
+            )
+            return jsonify({'success': False, 'error': msg})
+
+        best = result.get('best_20d')
+        if not best:
+            return jsonify({'success': False, 'error': '有効な結果なし'})
+
+        new_win_rate = best.get('win_rate_20d', 0) or 0
+        new_avg      = best.get('avg_return_20d', 0) or 0
+        new_score    = new_win_rate * 2 + new_avg
+        improved     = new_score > current_score
+
+        if improved and not dry_run:
+            new_params = {
+                'vol_ratio_min':    best['vol_ratio_min'],
+                'price_5d_chg_min': best['price_5d_chg_min'],
+                'turnover_min':     best.get('min_turnover', best.get('turnover_min', 50_000_000)),
+                'market':           best.get('market', ''),
+                'top_n':            best.get('top_n', 20),
+            }
+            win_stats = {
+                'win_rate_20d':       new_win_rate,
+                'avg_return_20d':     new_avg,
+                'win_rate_10d':       best.get('win_rate_10d'),
+                'avg_return_10d':     best.get('avg_return_10d'),
+                'total_combinations': result.get('total_combinations', 0),
+            }
+            test_dates  = result.get('test_dates', [])
+            center_date = test_dates[len(test_dates) // 2] if test_dates else ''
+            save_optimization_result(new_params, win_stats, center_date, test_dates)
+
+        if not dry_run:
+            save_auto_optimization_log(
+                improved=improved,
+                prev_score=current_score,
+                new_score=new_score if improved else current_score,
+                prev_win_rate=current_win_rate,
+                new_win_rate=new_win_rate if improved else current_win_rate,
+                best_params=best if improved else (current_params or {}),
+                lookback_weeks=lookback,
+                test_dates=result.get('test_dates', []),
+                note='improved' if improved else 'no_change',
+            )
+
+        return jsonify({
+            'success':         True,
+            'improved':        improved,
+            'prev_score':      current_score,
+            'new_score':       new_score if improved else current_score,
+            'prev_win_rate':   current_win_rate,
+            'new_win_rate':    new_win_rate,
+            'best_params':     best,
+            'total_time':      result.get('total_time'),
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
 
 if __name__ == '__main__':
     if ANTHROPIC_API_KEY:

@@ -1258,6 +1258,22 @@
 .validate-history-btn:hover    { background: linear-gradient(135deg, #0d9488, #0f766e); }
 .validate-history-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* 自動改善ボタン */
+.auto-improve-btn {
+    background: linear-gradient(135deg, #b45309, #d97706);
+    color: #fff;
+    border: none;
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+}
+.auto-improve-btn:hover    { background: linear-gradient(135deg, #d97706, #b45309); }
+.auto-improve-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
 /* 最適化ボタン */
 .optimize-btn {
     background: linear-gradient(135deg, #7c3aed, #5b21b6);

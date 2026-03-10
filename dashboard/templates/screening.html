@@ -164,12 +164,33 @@
                     <button class="optimize-btn" id="optimizeBtn" onclick="runOptimization()">🤖 自動最適化</button>
                     <button class="validate-history-btn" id="validateHistoryBtn"
                             onclick="runHistoryValidation()">📅 過去5時点で検証</button>
+                    <button class="auto-improve-btn" id="autoImproveBtn"
+                            onclick="runAutoImprove()">🔁 今すぐ自動改善</button>
                     <button class="breakout-refresh-btn" id="breakoutRefreshBtn"
                             onclick="clearDateAndReload()">↺ 最新</button>
                 </div>
                 <!-- 適用中条件ラベル -->
                 <div id="appliedParamsLabel" class="applied-params-label" style="display:none;"></div>
                 <p class="breakout-sub">直近5日間の平均出来高 ÷ 前6〜20日の平均出来高でスコアリング（週次出来高増加トレンド）。過去の日付を指定すれば遡ってスクリーニング可能。6ヶ月の日足チャート付き。</p>
+            </div>
+
+            <!-- 自動改善パネル -->
+            <div class="optimize-panel" id="autoImprovePanel" style="display:none;">
+                <div class="optimize-loading" id="autoImproveLoading" style="display:none;">
+                    <div class="breakout-spinner"></div>
+                    <span id="autoImproveMsg">現在のベスト条件を起点に改善中...（1〜2分）</span>
+                </div>
+                <div id="autoImproveResult"></div>
+            </div>
+
+            <!-- 自動最適化 改善履歴グラフ -->
+            <div id="autoOptHistorySection" style="display:none; margin:8px 0 4px;">
+                <div style="font-size:11px;color:#a0aec0;padding:6px 0 4px;">
+                    🔁 自動最適化 改善履歴
+                    <span id="autoOptHistoryCount" style="margin-left:6px;"></span>
+                </div>
+                <canvas id="autoOptHistoryChart" height="60"
+                        style="width:100%;max-height:60px;"></canvas>
             </div>
 
             <!-- 過去5時点 履歴検証パネル -->

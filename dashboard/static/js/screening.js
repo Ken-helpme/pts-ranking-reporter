@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadSectors();
     loadTopPicks();
     loadOptimizedParams();  // まずDBから最良パラメータを取得してからブレイクアウトをロード
+    loadAutoOptHistory();   // 自動最適化の改善履歴グラフを読み込む
 });
 
 /**
@@ -249,6 +250,134 @@ function clearDateAndReload() {
 /* ============================================================
    自動最適化
    ============================================================ */
+
+async function runAutoImprove() {
+    const btn     = document.getElementById('autoImproveBtn');
+    const panel   = document.getElementById('autoImprovePanel');
+    const loading = document.getElementById('autoImproveLoading');
+    const result  = document.getElementById('autoImproveResult');
+    const msgEl   = document.getElementById('autoImproveMsg');
+
+    const lookback    = parseInt(document.getElementById('lookbackSelect')?.value || '52');
+    const step        = lookback >= 52 ? 4 : 2;
+    const periodLabel = {12:'3ヶ月', 26:'6ヶ月', 52:'1年', 104:'2年', 156:'3年'}[lookback] || `${lookback}週`;
+
+    btn.disabled = true;
+    panel.style.display = 'block';
+    loading.style.display = 'flex';
+    result.innerHTML = '';
+    if (msgEl) msgEl.textContent =
+        `現在のベスト条件を起点に過去${periodLabel}（${step === 4 ? '月次' : '隔週'}）で探索中...`;
+
+    try {
+        const res  = await fetch('/api/screening/run_auto_optimize', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ lookback, n: 5000 }),
+        });
+        const data = await res.json();
+
+        if (!data.success) {
+            result.innerHTML = `<div class="optimize-error">エラー: ${escHtml(data.error || '不明')}</div>`;
+            return;
+        }
+
+        const improved = data.improved;
+        const arrow    = improved ? '⬆️' : '➡️';
+        const clr      = improved ? '#4ade80' : '#a0aec0';
+        const msg      = improved
+            ? `改善！ 勝率 ${data.prev_win_rate}% → <strong style="color:#4ade80">${data.new_win_rate}%</strong>（スコア ${data.prev_score?.toFixed(1)} → ${data.new_score?.toFixed(1)}）`
+            : `変化なし（現状維持）　勝率 ${data.prev_win_rate}%　スコア ${data.prev_score?.toFixed(1)}`;
+
+        result.innerHTML = `
+            <div style="padding:10px 16px;font-size:13px;color:${clr};">
+                ${arrow} ${msg}　（所要時間: ${data.total_time}秒）
+            </div>`;
+
+        if (improved) {
+            await loadAutoOptHistory();
+            await loadOptimizedParams();
+        }
+    } catch (e) {
+        result.innerHTML = `<div class="optimize-error">通信エラー: ${escHtml(e.message)}</div>`;
+    } finally {
+        loading.style.display = 'none';
+        btn.disabled = false;
+    }
+}
+
+async function loadAutoOptHistory() {
+    try {
+        const res  = await fetch('/api/screening/optimization_history');
+        const data = await res.json();
+        if (!data.success || !data.history?.length) return;
+
+        const section = document.getElementById('autoOptHistorySection');
+        const countEl = document.getElementById('autoOptHistoryCount');
+        section.style.display = 'block';
+
+        const hist     = [...data.history].reverse();   // 古い順に
+        const improved = hist.filter(h => h.improved);
+        countEl.textContent = `実行${hist.length}回 / 改善${improved.length}回`;
+
+        // Canvas スパークライン
+        const canvas = document.getElementById('autoOptHistoryChart');
+        const ctx    = canvas.getContext('2d');
+        const dpr    = window.devicePixelRatio || 1;
+        const W      = canvas.parentElement.clientWidth || 600;
+        const H      = 60;
+        canvas.width  = W * dpr;
+        canvas.height = H * dpr;
+        canvas.style.width  = W + 'px';
+        canvas.style.height = H + 'px';
+        ctx.scale(dpr, dpr);
+
+        const scores   = hist.map(h => h.new_score ?? h.prev_score ?? 0);
+        const winRates = hist.map(h => h.new_win_rate ?? 0);
+        const maxScore = Math.max(...scores, 1);
+        const minScore = Math.min(...scores, 0);
+        const range    = maxScore - minScore || 1;
+        const pad      = 8;
+        const xStep    = (W - pad * 2) / Math.max(scores.length - 1, 1);
+
+        ctx.clearRect(0, 0, W, H);
+
+        // ライン（スコア推移）
+        ctx.beginPath();
+        ctx.strokeStyle = '#7c3aed';
+        ctx.lineWidth   = 2;
+        scores.forEach((s, i) => {
+            const x = pad + i * xStep;
+            const y = H - pad - ((s - minScore) / range) * (H - pad * 2);
+            i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+
+        // 点（改善=緑、変化なし=グレー）
+        hist.forEach((h, i) => {
+            const s = scores[i];
+            const x = pad + i * xStep;
+            const y = H - pad - ((s - minScore) / range) * (H - pad * 2);
+            ctx.beginPath();
+            ctx.arc(x, y, 3, 0, Math.PI * 2);
+            ctx.fillStyle = h.improved ? '#4ade80' : '#4a5568';
+            ctx.fill();
+        });
+
+        // 最新値ラベル
+        if (scores.length > 0) {
+            const lastScore = scores[scores.length - 1];
+            const lastWr    = winRates[winRates.length - 1];
+            const lx        = pad + (scores.length - 1) * xStep;
+            const ly        = H - pad - ((lastScore - minScore) / range) * (H - pad * 2);
+            ctx.fillStyle   = '#e2e8f0';
+            ctx.font        = '10px Inter, sans-serif';
+            ctx.fillText(`勝率${lastWr}%`, lx - 28, Math.max(12, ly - 6));
+        }
+    } catch (_) {
+        // 履歴グラフは非クリティカルなので無視
+    }
+}
 
 async function runHistoryValidation() {
     const params = currentBreakoutParams;

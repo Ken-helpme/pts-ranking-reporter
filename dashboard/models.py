@@ -109,8 +109,81 @@ def init_db():
         )
     ''')
 
+    # Auto-optimization log table（毎週の自動改善履歴）
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS auto_optimization_log (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            improved      INTEGER DEFAULT 0,
+            prev_score    REAL,
+            new_score     REAL,
+            prev_win_rate REAL,
+            new_win_rate  REAL,
+            best_params   TEXT,
+            lookback_weeks INTEGER,
+            test_dates    TEXT,
+            note          TEXT
+        )
+    ''')
+
     conn.commit()
     conn.close()
+
+
+def save_auto_optimization_log(improved: bool, prev_score: float, new_score: float,
+                                prev_win_rate: float, new_win_rate: float,
+                                best_params: Dict, lookback_weeks: int,
+                                test_dates: list, note: str = '') -> None:
+    """自動最適化の実行ログを保存"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO auto_optimization_log
+        (improved, prev_score, new_score, prev_win_rate, new_win_rate,
+         best_params, lookback_weeks, test_dates, note)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        1 if improved else 0,
+        prev_score,
+        new_score,
+        prev_win_rate,
+        new_win_rate,
+        json.dumps(best_params, ensure_ascii=False),
+        lookback_weeks,
+        json.dumps(test_dates, ensure_ascii=False),
+        note,
+    ))
+    conn.commit()
+    conn.close()
+
+
+def get_auto_optimization_history(limit: int = 50) -> List[Dict]:
+    """自動最適化の履歴を取得（新しい順）"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT run_at, improved, prev_score, new_score,
+               prev_win_rate, new_win_rate, best_params, lookback_weeks, note
+        FROM auto_optimization_log
+        ORDER BY run_at DESC
+        LIMIT ?
+    ''', (limit,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            'run_at':        row[0],
+            'improved':      bool(row[1]),
+            'prev_score':    row[2],
+            'new_score':     row[3],
+            'prev_win_rate': row[4],
+            'new_win_rate':  row[5],
+            'best_params':   json.loads(row[6]) if row[6] else {},
+            'lookback_weeks':row[7],
+            'note':          row[8],
+        }
+        for row in rows
+    ]
 
 
 def save_optimization_result(best_params: Dict, win_stats: Dict,
