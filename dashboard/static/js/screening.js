@@ -250,6 +250,94 @@ function clearDateAndReload() {
    自動最適化
    ============================================================ */
 
+async function runHistoryValidation() {
+    const params = currentBreakoutParams;
+    if (!params || !params.vol_ratio_min) {
+        alert('先に条件を適用してください（🤖 自動最適化 → 適用）');
+        return;
+    }
+
+    const btn     = document.getElementById('validateHistoryBtn');
+    const panel   = document.getElementById('historyValidatePanel');
+    const loading = document.getElementById('historyValidateLoading');
+    const results = document.getElementById('historyValidateResults');
+
+    btn.disabled = true;
+    panel.style.display = 'block';
+    loading.style.display = 'flex';
+    results.innerHTML = '';
+
+    try {
+        const res  = await fetch('/api/screening/validate_history', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ params }),
+        });
+        const data = await res.json();
+        renderHistoryValidation(data);
+    } catch (e) {
+        results.innerHTML = `<div class="optimize-error">通信エラー: ${escHtml(e.message)}</div>`;
+    } finally {
+        loading.style.display = 'none';
+        btn.disabled = false;
+    }
+}
+
+function renderHistoryValidation(data) {
+    const el = document.getElementById('historyValidateResults');
+    if (!data.success) {
+        el.innerHTML = `<div class="optimize-error">エラー: ${escHtml(data.error || '不明')}</div>`;
+        return;
+    }
+
+    const labels = ['3ヶ月前', '6ヶ月前', '1年前', '2年前', '3年前'];
+    const p      = data.params;
+    const pLabel = `vol≥${p.vol_ratio_min}× ｜ 5日≥${p.price_5d_chg_min}% ｜ 代金≥${fmtTurnoverLabel(p.turnover_min || p.min_turnover || 0)} ｜ ${p.market || '全市場'} ｜ 上位${p.top_n}銘柄`;
+
+    let rows = '';
+    data.results.forEach((r, i) => {
+        const label = labels[i] || r.date;
+        if (r.error) {
+            rows += `<tr>
+                <td>${label}</td><td>${r.date}</td>
+                <td colspan="5" style="color:#888;font-size:11px;">${escHtml(r.error)}</td>
+            </tr>`;
+            return;
+        }
+        const wr   = r.win_rate_20d;
+        const ar   = r.avg_return_20d;
+        const wrCl = wr === null ? '' : wr >= 80 ? 'style="color:#4ade80;font-weight:700"'
+                                      : wr >= 60 ? 'style="color:#facc15"'
+                                      : 'style="color:#f87171"';
+        const arCl = ar === null ? '' : ar >= 0 ? 'style="color:#4ade80"' : 'style="color:#f87171"';
+
+        // 20d forward データがない場合（直近すぎる）
+        const wrTxt = wr !== null ? `${wr}%` : '計算中';
+        const arTxt = ar !== null ? `${ar > 0 ? '+' : ''}${ar}%` : '–';
+
+        rows += `<tr>
+            <td style="font-weight:600">${label}</td>
+            <td style="font-size:11px;color:#888">${r.actual_date || r.date}</td>
+            <td>${r.n_stocks}銘柄</td>
+            <td ${wrCl}>${wrTxt}</td>
+            <td ${arCl}>${arTxt}</td>
+            <td style="font-size:11px;color:#888">${r.win_rate_5d !== null ? r.win_rate_5d + '%' : '–'} / ${r.win_rate_10d !== null ? r.win_rate_10d + '%' : '–'} / ${wrTxt}</td>
+        </tr>`;
+    });
+
+    el.innerHTML = `
+        <div style="padding:12px 16px 4px;font-size:12px;color:#a0aec0;">
+            検証条件: ${escHtml(pLabel)} &nbsp;（所要時間: ${data.total_time}秒）
+        </div>
+        <table class="optimize-table" style="width:100%">
+            <thead><tr>
+                <th>時点</th><th>実際の日付</th><th>銘柄数</th>
+                <th>20日勝率</th><th>20日平均</th><th>5日/10日/20日 勝率</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+        </table>`;
+}
+
 async function runOptimization() {
     const btn     = document.getElementById('optimizeBtn');
     const panel   = document.getElementById('optimizePanel');

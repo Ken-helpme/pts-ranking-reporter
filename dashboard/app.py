@@ -334,6 +334,44 @@ def screening_search():
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})
 
+@app.route('/api/screening/validate_history', methods=['POST'])
+def screening_validate_history():
+    """現在の最良条件を3ヶ月前・6ヶ月前・1年前・2年前・3年前でテスト"""
+    try:
+        body   = request.get_json(silent=True) or {}
+        params = body.get('params', {})
+        if not params:
+            return jsonify({'success': False, 'error': 'params が指定されていません'})
+
+        from datetime import date
+        today = date.today()
+
+        def months_ago(m):
+            import calendar
+            y, mo = divmod(today.month - m - 1, 12)
+            last_day = calendar.monthrange(today.year + y, mo + 1)[1]
+            return date(today.year + y, mo + 1, min(today.day, last_day)).isoformat()
+
+        def years_ago(y):
+            try:
+                return date(today.year - y, today.month, today.day).isoformat()
+            except ValueError:
+                return date(today.year - y, today.month, 28).isoformat()
+
+        test_dates = [
+            months_ago(3),
+            months_ago(6),
+            years_ago(1),
+            years_ago(2),
+            years_ago(3),
+        ]
+        result = jquants.validate_params_at_dates(params=params, test_dates=test_dates)
+        return jsonify(result)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
 @app.route('/api/screening/optimize', methods=['GET', 'POST'])
 def screening_optimize():
     """大規模ランダム探索最適化（近傍探索 + グローバル探索）"""
