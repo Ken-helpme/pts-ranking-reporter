@@ -1260,6 +1260,18 @@
     border-radius: 20px;
 }
 
+/* AI自動最適化済みバッジ（夜間バッチ適用時） */
+.applied-params-label.auto-optimized {
+    color: #065f46;
+    background: linear-gradient(90deg, #d1fae5, #a7f3d0);
+    border-color: #6ee7b7;
+    animation: pulse-green 2s ease-in-out 3;
+}
+@keyframes pulse-green {
+    0%, 100% { box-shadow: none; }
+    50% { box-shadow: 0 0 8px rgba(16, 185, 129, 0.5); }
+}
+
 /* 最適化パネル */
 .optimize-panel {
     margin-bottom: 18px;

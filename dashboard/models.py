@@ -92,8 +92,80 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_trending_code ON trending_stocks(stock_code)
     ''')
 
+    # Optimization results table (auto-grow while sleeping)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS optimization_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            best_params TEXT NOT NULL,
+            win_rate_20d REAL,
+            avg_return_20d REAL,
+            win_rate_10d REAL,
+            avg_return_10d REAL,
+            test_center_date TEXT,
+            test_dates TEXT,
+            total_combinations INTEGER,
+            score REAL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
     conn.commit()
     conn.close()
+
+
+def save_optimization_result(best_params: Dict, win_stats: Dict,
+                              test_center_date: str, test_dates: List[str]) -> None:
+    """最適化結果を保存"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    score = (win_stats.get('win_rate_20d', 0) * 2 + win_stats.get('avg_return_20d', 0))
+    cursor.execute('''
+        INSERT INTO optimization_results
+        (best_params, win_rate_20d, avg_return_20d, win_rate_10d, avg_return_10d,
+         test_center_date, test_dates, total_combinations, score)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        json.dumps(best_params, ensure_ascii=False),
+        win_stats.get('win_rate_20d'),
+        win_stats.get('avg_return_20d'),
+        win_stats.get('win_rate_10d'),
+        win_stats.get('avg_return_10d'),
+        test_center_date,
+        json.dumps(test_dates, ensure_ascii=False),
+        win_stats.get('total_combinations', 0),
+        score,
+    ))
+    conn.commit()
+    conn.close()
+
+
+def get_latest_optimization() -> Optional[Dict]:
+    """最新の最適化結果を取得"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT best_params, win_rate_20d, avg_return_20d, win_rate_10d, avg_return_10d,
+               test_center_date, test_dates, total_combinations, score, created_at
+        FROM optimization_results
+        ORDER BY created_at DESC
+        LIMIT 1
+    ''')
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        'best_params':       json.loads(row[0]),
+        'win_rate_20d':      row[1],
+        'avg_return_20d':    row[2],
+        'win_rate_10d':      row[3],
+        'avg_return_10d':    row[4],
+        'test_center_date':  row[5],
+        'test_dates':        json.loads(row[6]) if row[6] else [],
+        'total_combinations':row[7],
+        'score':             row[8],
+        'created_at':        row[9],
+    }
 
 def save_trending_stocks(stocks: List[Dict], fetch_date: str = None):
     """話題株データを保存"""

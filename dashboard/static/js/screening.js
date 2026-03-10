@@ -14,8 +14,47 @@ let currentBreakoutParams = {
 document.addEventListener('DOMContentLoaded', () => {
     loadSectors();
     loadTopPicks();
-    loadBreakoutStocks();
+    loadOptimizedParams();  // まずDBから最良パラメータを取得してからブレイクアウトをロード
 });
+
+/**
+ * 起動時にDBから最良パラメータを取得して自動適用
+ */
+async function loadOptimizedParams() {
+    try {
+        const res  = await fetch('/api/screening/best_params');
+        const data = await res.json();
+
+        if (data.success && data.best_params) {
+            const p = data.best_params;
+            currentBreakoutParams = {
+                vol_ratio_min:    p.vol_ratio_min    ?? 1.5,
+                price_5d_chg_min: p.price_5d_chg_min ?? 0.0,
+                turnover_min:     p.turnover_min      ?? 50_000_000,
+                market:           p.market            ?? '',
+            };
+            showAutoOptimizedBadge(data);
+        }
+    } catch (e) {
+        // エラー時はデフォルトパラメータで継続
+    }
+    loadBreakoutStocks();
+}
+
+/**
+ * 🤖 AI最適化済みバッジを表示
+ */
+function showAutoOptimizedBadge(data) {
+    const label = document.getElementById('appliedParamsLabel');
+    if (!label) return;
+    const p   = data.best_params;
+    const wr  = data.win_rate_20d  != null ? `勝率${data.win_rate_20d}%` : '';
+    const ret = data.avg_return_20d != null ? `平均+${data.avg_return_20d}%` : '';
+    const dt  = data.created_at ? data.created_at.slice(0, 10) : '';
+    label.innerHTML = `🤖 AI自動最適化済み（${dt}）${wr} ${ret} ／ 出来高比×${p.vol_ratio_min} 5日変化>${p.price_5d_chg_min}% 売買代金>${(p.turnover_min/1e8).toFixed(0)}億円${p.market ? ' ' + p.market : ''}`;
+    label.style.display = 'block';
+    label.classList.add('auto-optimized');
+}
 
 /**
  * 今買うべき10銘柄を自動ロード

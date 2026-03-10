@@ -10,7 +10,7 @@ import os
 # Add parent directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from models import init_db, save_pts_data, get_latest_ranking, get_historical_data, get_statistics, save_trending_stocks, get_trending_stocks, get_trending_dates
+from models import init_db, save_pts_data, get_latest_ranking, get_historical_data, get_statistics, save_trending_stocks, get_trending_stocks, get_trending_dates, save_optimization_result, get_latest_optimization
 from trending_stock_fetcher import TrendingStockFetcher
 from scraper import KabutanScraper
 from analyzer import PTSAnalyzer
@@ -410,6 +410,74 @@ def screening_top_picks():
     except Exception as e:
         import traceback
         traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/screening/auto_optimize', methods=['POST'])
+def screening_auto_optimize():
+    """Cloud Schedulerから呼ばれる自動最適化（夜間バッチ）"""
+    # 簡易認証: OPTIMIZE_SECRET ヘッダーで保護
+    secret = os.getenv('OPTIMIZE_SECRET', '')
+    if secret and request.headers.get('X-Optimize-Secret', '') != secret:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+
+    try:
+        # 2週間前を基準日にして複数日バックテスト
+        from datetime import timedelta
+        center_date = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
+        result = jquants.run_backtest_optimization(center_date, multi_date=True)
+
+        if not result.get('success'):
+            return jsonify({'success': False, 'error': result.get('error', 'optimization failed')}), 500
+
+        best = result.get('best_20d') or (result['combinations'][0] if result.get('combinations') else None)
+        if not best:
+            return jsonify({'success': False, 'error': 'No best params found'}), 500
+
+        best_params = {
+            'vol_ratio_min':    best['vol_ratio_min'],
+            'price_5d_chg_min': best['price_5d_chg_min'],
+            'turnover_min':     best['turnover_min'],
+            'market':           best.get('market', ''),
+        }
+        win_stats = {
+            'win_rate_20d':      best.get('win_rate_20d'),
+            'avg_return_20d':    best.get('avg_return_20d'),
+            'win_rate_10d':      best.get('win_rate_10d'),
+            'avg_return_10d':    best.get('avg_return_10d'),
+            'total_combinations': result.get('total_combinations', 0),
+        }
+        save_optimization_result(best_params, win_stats, center_date, result.get('test_dates', []))
+
+        return jsonify({
+            'success': True,
+            'best_params': best_params,
+            'win_stats': win_stats,
+            'center_date': center_date,
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/screening/best_params')
+def screening_best_params():
+    """フロントエンドが起動時に呼ぶ：DB保存済み最良パラメータを返す"""
+    try:
+        opt = get_latest_optimization()
+        if not opt:
+            return jsonify({'success': False, 'error': 'No optimization result yet'})
+        return jsonify({
+            'success': True,
+            'best_params':    opt['best_params'],
+            'win_rate_20d':   opt['win_rate_20d'],
+            'avg_return_20d': opt['avg_return_20d'],
+            'score':          opt['score'],
+            'center_date':    opt['test_center_date'],
+            'created_at':     opt['created_at'],
+        })
+    except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
 if __name__ == '__main__':
