@@ -154,6 +154,13 @@
                                max="2026-03-09">
                         <button class="breakout-apply-btn" onclick="loadBreakoutStocks()">適用</button>
                     </div>
+                    <select id="lookbackSelect" class="lookback-select" title="バックテスト期間">
+                        <option value="12">3ヶ月</option>
+                        <option value="26">6ヶ月</option>
+                        <option value="52" selected>1年</option>
+                        <option value="104">2年</option>
+                        <option value="156">3年</option>
+                    </select>
                     <button class="optimize-btn" id="optimizeBtn" onclick="runOptimization()">🤖 自動最適化</button>
                     <button class="breakout-refresh-btn" id="breakoutRefreshBtn"
                             onclick="clearDateAndReload()">↺ 最新</button>

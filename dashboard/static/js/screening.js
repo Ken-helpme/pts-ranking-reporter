@@ -251,20 +251,31 @@ function clearDateAndReload() {
    ============================================================ */
 
 async function runOptimization() {
-    const btn       = document.getElementById('optimizeBtn');
-    const panel     = document.getElementById('optimizePanel');
-    const loading   = document.getElementById('optimizeLoading');
-    const results   = document.getElementById('optimizeResults');
+    const btn     = document.getElementById('optimizeBtn');
+    const panel   = document.getElementById('optimizePanel');
+    const loading = document.getElementById('optimizeLoading');
+    const results = document.getElementById('optimizeResults');
     const msgEl   = document.getElementById('optimizeLoadingMsg');
+
+    const lookback    = parseInt(document.getElementById('lookbackSelect')?.value || '52');
+    const step        = lookback >= 52 ? 4 : 2;   // 1年以上は月次(4週)刻み
+    const base        = window._optimizeBestParams || null;   // 前回最良条件（近傍探索に使用）
+    const periodLabel = {12:'3ヶ月', 26:'6ヶ月', 52:'1年', 104:'2年', 156:'3年'}[lookback] || `${lookback}週`;
+    const modeLabel   = base ? '現在の最良条件を起点に近傍探索+全体探索' : '全体ランダム探索';
 
     btn.disabled = true;
     panel.style.display = 'block';
     loading.style.display = 'flex';
     results.innerHTML = '';
-    if (msgEl) msgEl.textContent = '5,000条件 × 過去3ヶ月データで最適化中...（1〜2分）';
+    if (msgEl) msgEl.textContent =
+        `5,000条件 × 過去${periodLabel}（${step === 4 ? '月次' : '隔週'}）で最適化中... ${modeLabel}`;
 
     try {
-        const res  = await fetch('/api/screening/optimize?n=5000&lookback=12');
+        const res  = await fetch('/api/screening/optimize', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ n: 5000, lookback, step, base_params: base }),
+        });
         const data = await res.json();
         renderOptimizeResults(data);
     } catch (e) {

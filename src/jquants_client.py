@@ -900,13 +900,16 @@ class JQuantsClient:
                                      lookback_weeks: int = 12,
                                      step_weeks:     int = 2,
                                      n_trials:       int = 5000,
-                                     top_n:          int = 20) -> Dict:
+                                     top_n:          int = 20,
+                                     base_params:    Optional[Dict] = None) -> Dict:
         """
         大規模ランダム探索最適化。
 
-        過去 lookback_weeks 週分（step_weeks 刻み）のテスト日を生成し、
-        n_trials 通りのランダムパラメータ組み合わせを評価して
-        最も勝率の高い条件を返す。
+        base_params が指定された場合は「近傍探索（50%）+ 全体ランダム（50%）」で
+        現在の最良条件を起点にさらに勝率を高める条件を探す。
+
+        lookback_weeks / step_weeks で遡る期間と間隔を制御する。
+        例: lookback_weeks=104, step_weeks=4 → 2年分を月次でテスト
 
         Returns:
             success, test_dates, combinations, best_20d, best_10d,
@@ -1084,19 +1087,45 @@ class JQuantsClient:
         market_choices = ['', '', '', 'プライム', 'スタンダード']  # '' を多めに
         top_n_choices  = [3, 5, 7, 10, 15, 20]   # 上位何銘柄を選ぶか（少ないほど高シグナル）
 
-        random.seed(42)  # 再現性のため固定シード（毎回同じ探索空間）
+        random.seed(None)  # 毎回異なる探索（base_paramsがある場合の近傍は毎回変化）
         seen = set()
         trials = []
         attempts = 0
-        while len(trials) < n_trials and attempts < n_trials * 3:
+        n_neighborhood = n_trials // 2 if base_params else 0  # base_paramsがあれば半数を近傍探索
+
+        while len(trials) < n_trials and attempts < n_trials * 5:
             attempts += 1
-            p = (
-                random.choice(vol_ratio_choices),
-                random.choice(price_5d_chg_choices),
-                random.choice(turnover_choices),
-                random.choice(market_choices),
-                random.choice(top_n_choices),
-            )
+            use_neighborhood = base_params and len(trials) < n_neighborhood
+
+            if use_neighborhood:
+                # ── 近傍探索: 現在の最良条件を起点に±調整 ──
+                bv  = base_params.get('vol_ratio_min', 5.0)
+                bp  = base_params.get('price_5d_chg_min', 0.0)
+                bt  = base_params.get('turnover_min', 500_000_000)
+                bm  = base_params.get('market', '')
+                btn = int(base_params.get('top_n', 20))
+                # 各パラメータに±ノイズを加えて近傍点を生成
+                nv = round(max(1.0, bv * random.uniform(0.5, 2.0)), 1)
+                np_ = round(bp + random.uniform(-3.0, 5.0), 1)
+                nt = int(max(10_000_000, bt * random.uniform(0.2, 5.0)))
+                nm = random.choice([bm, bm, bm, '', 'プライム', 'スタンダード'])
+                nn = random.choice([max(3, btn - 5), max(3, btn - 2), btn,
+                                    min(20, btn + 2), min(20, btn + 5)])
+                # 最も近い候補値に丸める
+                nv = min(vol_ratio_choices,    key=lambda x: abs(x - nv))
+                np_ = min(price_5d_chg_choices, key=lambda x: abs(x - np_))
+                nt = min(turnover_choices,      key=lambda x: abs(x - nt))
+                p = (nv, np_, nt, nm, nn)
+            else:
+                # ── 全体ランダム探索 ──
+                p = (
+                    random.choice(vol_ratio_choices),
+                    random.choice(price_5d_chg_choices),
+                    random.choice(turnover_choices),
+                    random.choice(market_choices),
+                    random.choice(top_n_choices),
+                )
+
             if p not in seen:
                 seen.add(p)
                 trials.append({

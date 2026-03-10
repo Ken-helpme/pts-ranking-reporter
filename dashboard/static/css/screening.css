@@ -1228,6 +1228,20 @@
    自動最適化
    ============================== */
 
+/* ルックバック期間セレクタ */
+.lookback-select {
+    height: 32px;
+    border-radius: 6px;
+    padding: 0 8px;
+    font-size: 12px;
+    background: #1a1f35;
+    color: #c0c8e8;
+    border: 1px solid #3a4060;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.lookback-select:focus { outline: none; border-color: #7c3aed; }
+
 /* 最適化ボタン */
 .optimize-btn {
     background: linear-gradient(135deg, #7c3aed, #5b21b6);

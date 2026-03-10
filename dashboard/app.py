@@ -334,16 +334,20 @@ def screening_search():
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})
 
-@app.route('/api/screening/optimize')
+@app.route('/api/screening/optimize', methods=['GET', 'POST'])
 def screening_optimize():
-    """大規模ランダム探索最適化（5000通り × 過去6ヶ月）"""
+    """大規模ランダム探索最適化（近傍探索 + グローバル探索）"""
     try:
-        n_trials      = request.args.get('n', 5000, type=int)
-        lookback      = request.args.get('lookback', 12, type=int)
+        body        = request.get_json(silent=True) or {}
+        n_trials    = body.get('n',        request.args.get('n',        5000, type=int))
+        lookback    = body.get('lookback', request.args.get('lookback', 12,   type=int))
+        step        = body.get('step',     request.args.get('step',     2,    type=int))
+        base_params = body.get('base_params', None)   # 現在の最良条件（近傍探索に使用）
         result = jquants.run_large_scale_optimization(
             lookback_weeks=lookback,
-            step_weeks=2,
+            step_weeks=step,
             n_trials=n_trials,
+            base_params=base_params,
         )
         return jsonify(result)
     except Exception as e:
