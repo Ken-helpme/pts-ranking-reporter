@@ -303,6 +303,9 @@ function renderOptimizeResults(data) {
         return;
     }
 
+    // 後で applyOptimizeParams から参照できるよう保持
+    window._lastOptimizeData = data;
+
     const combos = data.combinations || [];
     const best   = data.best_20d;
 
@@ -367,11 +370,35 @@ function applyOptimizeParams(params) {
         market:           params.market || '',
     };
 
-    // 適用中ラベル更新
+    // DBに保存（次回ページを開いたとき自動ロード）
+    const lastOptData = window._lastOptimizeData || {};
+    fetch('/api/screening/save_best_params', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            vol_ratio_min:    params.vol_ratio_min,
+            price_5d_chg_min: params.price_5d_chg_min,
+            turnover_min:     params.min_turnover,
+            market:           params.market || '',
+            win_rate_20d:     params.win_rate_20d,
+            avg_return_20d:   params.avg_return_20d,
+            win_rate_10d:     params.win_rate_10d,
+            avg_return_10d:   params.avg_return_10d,
+            total_combinations: lastOptData.total_combinations,
+            center_date:      lastOptData.test_dates ? lastOptData.test_dates[0] : '',
+            test_dates:       lastOptData.test_dates || [],
+        }),
+    });
+
+    // 適用中ラベル更新（緑バッジ）
     const lbl = document.getElementById('appliedParamsLabel');
     if (lbl) {
-        lbl.textContent = `✅ 適用中: ${fmtParamsSummary(params)}`;
-        lbl.style.display = 'inline-flex';
+        const wr  = params.win_rate_20d  != null ? ` 勝率${params.win_rate_20d}%` : '';
+        const ret = params.avg_return_20d != null ? ` 平均+${params.avg_return_20d}%` : '';
+        const today = new Date().toISOString().slice(0, 10);
+        lbl.innerHTML = `🤖 AI最適化済み（${today}）${wr}${ret} ／ ${fmtParamsSummary(params)}`;
+        lbl.style.display = 'block';
+        lbl.classList.add('auto-optimized');
     }
 
     // 最適化パネルを閉じる

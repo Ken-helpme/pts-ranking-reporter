@@ -480,6 +480,32 @@ def screening_best_params():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+
+@app.route('/api/screening/save_best_params', methods=['POST'])
+def screening_save_best_params():
+    """手動最適化ボタンで「適用」したときにDBへ保存"""
+    try:
+        body = request.get_json() or {}
+        best_params = {
+            'vol_ratio_min':    body.get('vol_ratio_min', 1.5),
+            'price_5d_chg_min': body.get('price_5d_chg_min', 0.0),
+            'turnover_min':     body.get('turnover_min', 50_000_000),
+            'market':           body.get('market', ''),
+        }
+        win_stats = {
+            'win_rate_20d':      body.get('win_rate_20d'),
+            'avg_return_20d':    body.get('avg_return_20d'),
+            'win_rate_10d':      body.get('win_rate_10d'),
+            'avg_return_10d':    body.get('avg_return_10d'),
+            'total_combinations': body.get('total_combinations', 0),
+        }
+        test_center_date = body.get('center_date', datetime.now().strftime('%Y-%m-%d'))
+        test_dates       = body.get('test_dates', [])
+        save_optimization_result(best_params, win_stats, test_center_date, test_dates)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
 if __name__ == '__main__':
     if ANTHROPIC_API_KEY:
         print("✅ Claude API Key: 設定済み")
