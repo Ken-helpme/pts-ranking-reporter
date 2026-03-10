@@ -257,10 +257,10 @@ async function runOptimization() {
     panel.style.display = 'block';
     loading.style.display = 'flex';
     results.innerHTML = '';
-    if (msgEl) msgEl.textContent = '5,000条件 × 過去6ヶ月データで最適化中...（1〜3分）';
+    if (msgEl) msgEl.textContent = '5,000条件 × 過去3ヶ月データで最適化中...（1〜2分）';
 
     try {
-        const res  = await fetch('/api/screening/optimize?n=5000&lookback=24');
+        const res  = await fetch('/api/screening/optimize?n=5000&lookback=12');
         const data = await res.json();
         renderOptimizeResults(data);
     } catch (e) {

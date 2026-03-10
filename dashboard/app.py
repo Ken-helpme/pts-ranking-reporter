@@ -339,7 +339,7 @@ def screening_optimize():
     """大規模ランダム探索最適化（5000通り × 過去6ヶ月）"""
     try:
         n_trials      = request.args.get('n', 5000, type=int)
-        lookback      = request.args.get('lookback', 24, type=int)
+        lookback      = request.args.get('lookback', 12, type=int)
         result = jquants.run_large_scale_optimization(
             lookback_weeks=lookback,
             step_weeks=2,

@@ -897,7 +897,7 @@ class JQuantsClient:
         }
 
     def run_large_scale_optimization(self,
-                                     lookback_weeks: int = 24,
+                                     lookback_weeks: int = 12,
                                      step_weeks:     int = 2,
                                      n_trials:       int = 5000,
                                      top_n:          int = 20) -> Dict:
@@ -934,13 +934,15 @@ class JQuantsClient:
             today_real.strftime('%Y-%m-%d')
         )
 
+        # 土日をスキップ（API呼び出し数を約30%削減してレート制限回避）
         cal_dates = []
         d = fetch_from
         while d.strftime('%Y-%m-%d') <= fetch_to:
-            cal_dates.append(d.strftime('%Y-%m-%d'))
+            if d.weekday() < 5:  # 月〜金のみ
+                cal_dates.append(d.strftime('%Y-%m-%d'))
             d += timedelta(days=1)
 
-        logger.info(f"大規模最適化: {len(test_dates_candidates)}テスト日, {n_trials}試行, {len(cal_dates)}日フェッチ")
+        logger.info(f"大規模最適化: {len(test_dates_candidates)}テスト日, {n_trials}試行, {len(cal_dates)}営業日フェッチ")
 
         all_data: Dict[str, Dict] = {}
 
@@ -950,7 +952,8 @@ class JQuantsClient:
                 return date, {p['Code']: p for p in data}
             return date, None
 
-        with ThreadPoolExecutor(max_workers=8) as ex:
+        # max_workers=4 に抑えてレート制限を回避
+        with ThreadPoolExecutor(max_workers=4) as ex:
             futures = {ex.submit(_fetch, date): date for date in cal_dates}
             for fut in as_completed(futures):
                 date, result = fut.result()
@@ -958,8 +961,12 @@ class JQuantsClient:
                     all_data[date] = result
 
         trading_days_sorted = sorted(all_data.keys())
-        if len(trading_days_sorted) < 15:
-            return {'success': False, 'error': 'データ取得失敗（取引日データ不足）'}
+        if len(trading_days_sorted) < 10:
+            return {
+                'success': False,
+                'error': f'データ取得失敗（取得できた取引日: {len(trading_days_sorted)}日 / 試行: {len(cal_dates)}日）'
+                         ' - J-Quantsプランの履歴制限かレート制限の可能性があります'
+            }
 
         # ── 3. マスターデータ ──
         master = self.get_master()
