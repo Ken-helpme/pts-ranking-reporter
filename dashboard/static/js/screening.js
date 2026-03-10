@@ -251,27 +251,16 @@ async function runOptimization() {
     const panel     = document.getElementById('optimizePanel');
     const loading   = document.getElementById('optimizeLoading');
     const results   = document.getElementById('optimizeResults');
-    const msgEl     = document.getElementById('optimizeLoadingMsg');
-    const dateEl    = document.getElementById('breakoutTargetDate');
-
-    // テスト日: 日付ピッカーが空なら60日前をデフォルト
-    let testDate = dateEl ? dateEl.value : '';
-    if (!testDate) {
-        const d = new Date();
-        d.setDate(d.getDate() - 60);
-        testDate = d.toISOString().slice(0, 10);
-        if (dateEl) dateEl.value = testDate;
-    }
+    const msgEl   = document.getElementById('optimizeLoadingMsg');
 
     btn.disabled = true;
     panel.style.display = 'block';
     loading.style.display = 'flex';
     results.innerHTML = '';
-    if (msgEl) msgEl.textContent = `${testDate} 前後 × 128条件をテスト中...（約10〜20秒）`;
+    if (msgEl) msgEl.textContent = '5,000条件 × 過去6ヶ月データで最適化中...（1〜3分）';
 
     try {
-        const url  = `/api/screening/optimize?date=${encodeURIComponent(testDate)}&multi=true`;
-        const res  = await fetch(url);
+        const res  = await fetch('/api/screening/optimize?n=5000&lookback=24');
         const data = await res.json();
         renderOptimizeResults(data);
     } catch (e) {

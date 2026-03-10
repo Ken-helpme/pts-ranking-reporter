@@ -895,3 +895,262 @@ class JQuantsClient:
             'total_combinations': len(combo_results),
             'total_time':         round(time.time() - t0, 1),
         }
+
+    def run_large_scale_optimization(self,
+                                     lookback_weeks: int = 24,
+                                     step_weeks:     int = 2,
+                                     n_trials:       int = 5000,
+                                     top_n:          int = 20) -> Dict:
+        """
+        大規模ランダム探索最適化。
+
+        過去 lookback_weeks 週分（step_weeks 刻み）のテスト日を生成し、
+        n_trials 通りのランダムパラメータ組み合わせを評価して
+        最も勝率の高い条件を返す。
+
+        Returns:
+            success, test_dates, combinations, best_20d, best_10d,
+            total_combinations, total_time
+        """
+        import random
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        t0 = time.time()
+        today_real = datetime.now()
+
+        # ── 1. テスト日付を過去 lookback_weeks 週、step_weeks 刻みで生成 ──
+        # 直近 25 日は forward data が取れないので避ける
+        latest_test = today_real - timedelta(days=25)
+        test_dates_candidates = []
+        for w in range(0, lookback_weeks, step_weeks):
+            d = (latest_test - timedelta(weeks=w)).strftime('%Y-%m-%d')
+            test_dates_candidates.append(d)
+
+        # ── 2. 必要なデータ範囲を一括フェッチ ──
+        oldest_test = datetime.strptime(min(test_dates_candidates), '%Y-%m-%d')
+        fetch_from  = oldest_test - timedelta(days=40)
+        fetch_to    = min(
+            (latest_test + timedelta(days=25)).strftime('%Y-%m-%d'),
+            today_real.strftime('%Y-%m-%d')
+        )
+
+        cal_dates = []
+        d = fetch_from
+        while d.strftime('%Y-%m-%d') <= fetch_to:
+            cal_dates.append(d.strftime('%Y-%m-%d'))
+            d += timedelta(days=1)
+
+        logger.info(f"大規模最適化: {len(test_dates_candidates)}テスト日, {n_trials}試行, {len(cal_dates)}日フェッチ")
+
+        all_data: Dict[str, Dict] = {}
+
+        def _fetch(date):
+            data = self._fetch_prices_for_date(date)
+            if data and len(data) > 100:
+                return date, {p['Code']: p for p in data}
+            return date, None
+
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futures = {ex.submit(_fetch, date): date for date in cal_dates}
+            for fut in as_completed(futures):
+                date, result = fut.result()
+                if result:
+                    all_data[date] = result
+
+        trading_days_sorted = sorted(all_data.keys())
+        if len(trading_days_sorted) < 15:
+            return {'success': False, 'error': 'データ取得失敗（取引日データ不足）'}
+
+        # ── 3. マスターデータ ──
+        master = self.get_master()
+        if not master:
+            return {'success': False, 'error': 'マスターデータ取得失敗'}
+        master_dict = {item['Code']: item for item in master}
+        valid_codes = {item['Code'] for item in master if item.get('MktNm') != 'TOKYO PRO MARKET'}
+
+        def _stats(vals):
+            if not vals:
+                return None, None, 0
+            w = sum(1 for v in vals if v > 0)
+            return round(w / len(vals) * 100, 1), round(sum(vals) / len(vals), 2), len(vals)
+
+        # ── 4. 各テスト日のユニバース算出 ──
+        stock_universe: Dict[str, List[Dict]] = {}
+
+        for td in test_dates_candidates:
+            before = [d for d in trading_days_sorted if d <= td]
+            if len(before) < 8:
+                continue
+            today_date = before[-1]
+            if today_date in stock_universe:
+                continue
+
+            today_prices = all_data.get(today_date)
+            if not today_prices:
+                continue
+
+            after = [d for d in trading_days_sorted if d > today_date]
+            fwd_map: Dict[int, Dict[str, float]] = {}
+            for n in [5, 10, 20]:
+                if len(after) >= n:
+                    t = after[n - 1]
+                    fwd_map[n] = {
+                        code: float(pdata.get('AdjC') or pdata.get('C'))
+                        for code, pdata in all_data[t].items()
+                        if (pdata.get('AdjC') or pdata.get('C'))
+                    }
+
+            before_window = before[-25:]
+            stocks_list = []
+            for code in valid_codes:
+                if code not in today_prices:
+                    continue
+                closes, volumes = [], []
+                for day in before_window:
+                    pdata = all_data[day].get(code)
+                    if not pdata:
+                        continue
+                    c = pdata.get('AdjC') or pdata.get('C')
+                    v = pdata.get('AdjVo') or pdata.get('Vo') or 0
+                    if c:
+                        closes.append(float(c))
+                        volumes.append(float(v))
+
+                if len(closes) < 5:
+                    continue
+
+                today_close    = closes[-1]
+                today_turnover = float(today_prices[code].get('Va') or 0)
+                if today_close == 0:
+                    continue
+
+                recent_vols   = volumes[-5:]
+                recent_avg    = sum(recent_vols) / len(recent_vols)
+                baseline_vols = (volumes[-20:-5] if len(volumes) >= 20
+                                 else volumes[:-5] if len(volumes) > 5 else [])
+                baseline_avg  = (sum(baseline_vols) / len(baseline_vols)
+                                 if baseline_vols else recent_avg or 1)
+                vol_ratio     = recent_avg / baseline_avg if baseline_avg > 0 else 0
+
+                ref          = closes[-6] if len(closes) >= 6 else closes[0]
+                price_5d_chg = (today_close - ref) / ref * 100 if ref > 0 else 0.0
+
+                fwd = {}
+                for n in [5, 10, 20]:
+                    fp = fwd_map.get(n, {}).get(code)
+                    fwd[f'fwd_{n}d'] = round((fp / today_close - 1) * 100, 2) if fp and today_close else None
+
+                m = master_dict.get(code, {})
+                stocks_list.append({
+                    'code':         code,
+                    'market':       m.get('MktNm', ''),
+                    'vol_ratio':    vol_ratio,
+                    'price_5d_chg': price_5d_chg,
+                    'turnover':     today_turnover,
+                    **fwd,
+                })
+
+            stock_universe[today_date] = stocks_list
+            logger.info(f"  {today_date}: {len(stocks_list)}銘柄")
+
+        if not stock_universe:
+            return {'success': False, 'error': '有効なテストデータなし'}
+
+        # ── 5. ランダムサーチ n_trials 通り ──
+        # パラメータの探索空間（グリッドより大幅に広い連続空間）
+        vol_ratio_choices    = [round(x * 0.1, 1) for x in range(10, 51)]   # 1.0〜5.0
+        price_5d_chg_choices = [round(x * 0.5, 1) for x in range(-4, 21)]   # -2.0〜10.0
+        # 売買代金: 1000万〜30億（対数スケールで均等サンプリング）
+        import math as _math
+        turnover_choices = [int(10 ** (_math.log10(10_000_000) + i *
+                             (_math.log10(3_000_000_000) - _math.log10(10_000_000)) / 49))
+                            for i in range(50)]
+        market_choices = ['', '', '', 'プライム', 'スタンダード']  # '' を多めに
+
+        random.seed(42)  # 再現性のため固定シード（毎回同じ探索空間）
+        seen = set()
+        trials = []
+        attempts = 0
+        while len(trials) < n_trials and attempts < n_trials * 3:
+            attempts += 1
+            p = (
+                random.choice(vol_ratio_choices),
+                random.choice(price_5d_chg_choices),
+                random.choice(turnover_choices),
+                random.choice(market_choices),
+            )
+            if p not in seen:
+                seen.add(p)
+                trials.append({
+                    'vol_ratio_min':    p[0],
+                    'price_5d_chg_min': p[1],
+                    'min_turnover':     p[2],
+                    'market':           p[3],
+                })
+
+        combo_results = []
+        for p in trials:
+            fwd_all = {5: [], 10: [], 20: []}
+            total_picks = 0
+            date_count  = 0
+
+            for stocks in stock_universe.values():
+                filtered = [
+                    s for s in stocks
+                    if s['vol_ratio']    >= p['vol_ratio_min']
+                    and s['price_5d_chg'] > p['price_5d_chg_min']
+                    and s['turnover']    >= p['min_turnover']
+                    and (not p['market'] or s['market'] == p['market'])
+                ]
+                for s in filtered:
+                    vs = min(s['vol_ratio'] / 5.0, 1.0)
+                    ps = min(max(s['price_5d_chg'], 0) / 15.0, 1.0)
+                    s['_s'] = vs * 0.5 + ps * 0.5
+                filtered.sort(key=lambda x: x['_s'], reverse=True)
+                top = filtered[:top_n]
+                if not top:
+                    continue
+                date_count  += 1
+                total_picks += len(top)
+                for s in top:
+                    for n in [5, 10, 20]:
+                        v = s.get(f'fwd_{n}d')
+                        if v is not None:
+                            fwd_all[n].append(v)
+
+            if not fwd_all[10]:
+                continue
+
+            wr5,  ar5,  n5  = _stats(fwd_all[5])
+            wr10, ar10, n10 = _stats(fwd_all[10])
+            wr20, ar20, n20 = _stats(fwd_all[20])
+
+            combo_results.append({
+                **p,
+                'date_count':    date_count,
+                'avg_picks':     round(total_picks / max(date_count, 1), 1),
+                'win_rate_5d':   wr5,  'avg_return_5d':  ar5,  'n_5d':  n5,
+                'win_rate_10d':  wr10, 'avg_return_10d': ar10, 'n_10d': n10,
+                'win_rate_20d':  wr20, 'avg_return_20d': ar20, 'n_20d': n20,
+            })
+
+        combo_results.sort(
+            key=lambda x: ((x['win_rate_20d'] or 0) * 2 + (x['avg_return_20d'] or 0)),
+            reverse=True
+        )
+        best_20d = combo_results[0] if combo_results else None
+        best_10d = sorted(
+            combo_results,
+            key=lambda x: ((x['win_rate_10d'] or 0) * 2 + (x['avg_return_10d'] or 0)),
+            reverse=True
+        )[0] if combo_results else None
+
+        return {
+            'success':            True,
+            'test_dates':         sorted(stock_universe.keys()),
+            'combinations':       combo_results[:20],
+            'best_20d':           best_20d,
+            'best_10d':           best_10d,
+            'total_combinations': len(combo_results),
+            'total_time':         round(time.time() - t0, 1),
+        }

@@ -336,13 +336,15 @@ def screening_search():
 
 @app.route('/api/screening/optimize')
 def screening_optimize():
-    """パラメータ自動最適化（バックテストグリッドサーチ）"""
+    """大規模ランダム探索最適化（5000通り × 過去6ヶ月）"""
     try:
-        test_date = request.args.get('date', '')
-        multi     = request.args.get('multi', 'true').lower() == 'true'
-        if not test_date:
-            return jsonify({'success': False, 'error': 'date パラメータが必要です'})
-        result = jquants.run_backtest_optimization(test_date, multi_date=multi)
+        n_trials      = request.args.get('n', 5000, type=int)
+        lookback      = request.args.get('lookback', 24, type=int)
+        result = jquants.run_large_scale_optimization(
+            lookback_weeks=lookback,
+            step_weeks=2,
+            n_trials=n_trials,
+        )
         return jsonify(result)
     except Exception as e:
         import traceback
@@ -422,10 +424,12 @@ def screening_auto_optimize():
         return jsonify({'success': False, 'error': 'Unauthorized'}), 401
 
     try:
-        # 2週間前を基準日にして複数日バックテスト
-        from datetime import timedelta
-        center_date = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
-        result = jquants.run_backtest_optimization(center_date, multi_date=True)
+        # 過去6ヶ月 × 5000通りのランダム探索
+        result = jquants.run_large_scale_optimization(
+            lookback_weeks=24,
+            step_weeks=2,
+            n_trials=5000,
+        )
 
         if not result.get('success'):
             return jsonify({'success': False, 'error': result.get('error', 'optimization failed')}), 500
@@ -437,7 +441,7 @@ def screening_auto_optimize():
         best_params = {
             'vol_ratio_min':    best['vol_ratio_min'],
             'price_5d_chg_min': best['price_5d_chg_min'],
-            'turnover_min':     best['turnover_min'],
+            'turnover_min':     best.get('min_turnover', best.get('turnover_min', 50_000_000)),
             'market':           best.get('market', ''),
         }
         win_stats = {
@@ -447,6 +451,7 @@ def screening_auto_optimize():
             'avg_return_10d':    best.get('avg_return_10d'),
             'total_combinations': result.get('total_combinations', 0),
         }
+        center_date = result['test_dates'][len(result['test_dates'])//2] if result.get('test_dates') else ''
         save_optimization_result(best_params, win_stats, center_date, result.get('test_dates', []))
 
         return jsonify({
