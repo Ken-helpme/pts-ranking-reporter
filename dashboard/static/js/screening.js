@@ -8,6 +8,7 @@ let currentBreakoutParams = {
     price_5d_chg_min: 0.0,
     turnover_min:     50_000_000,
     market:           '',
+    top_n:            20,   // 上位何銘柄を選ぶか（少ないほど高シグナル）
 };
 
 // 初期化
@@ -32,6 +33,7 @@ async function loadOptimizedParams() {
                 price_5d_chg_min: p.price_5d_chg_min ?? 0.0,
                 turnover_min:     p.turnover_min      ?? 50_000_000,
                 market:           p.market            ?? '',
+                top_n:            p.top_n             ?? 20,
             };
             showAutoOptimizedBadge(data);
         }
@@ -51,7 +53,8 @@ function showAutoOptimizedBadge(data) {
     const wr  = data.win_rate_20d  != null ? `勝率${data.win_rate_20d}%` : '';
     const ret = data.avg_return_20d != null ? `平均+${data.avg_return_20d}%` : '';
     const dt  = data.created_at ? data.created_at.slice(0, 10) : '';
-    label.innerHTML = `🤖 AI自動最適化済み（${dt}）${wr} ${ret} ／ 出来高比×${p.vol_ratio_min} 5日変化>${p.price_5d_chg_min}% 売買代金>${(p.turnover_min/1e8).toFixed(0)}億円${p.market ? ' ' + p.market : ''}`;
+    const tn = p.top_n ? ` 上位${p.top_n}銘柄` : '';
+    label.innerHTML = `🤖 AI自動最適化済み（${dt}）${wr} ${ret} ／ 出来高比×${p.vol_ratio_min} 5日変化>${p.price_5d_chg_min}% 売買代金>${(p.turnover_min/1e8).toFixed(0)}億円${p.market ? ' ' + p.market : ''}${tn}`;
     label.style.display = 'block';
     label.classList.add('auto-optimized');
 }
@@ -165,7 +168,8 @@ async function loadBreakoutStocks() {
 
     try {
         const targetDate = targetDateEl ? targetDateEl.value : '';
-        let url = '/api/screening/volume_breakout?days=20&n=20';
+        const tn = currentBreakoutParams.top_n ?? 20;
+        let url = `/api/screening/volume_breakout?days=20&n=${tn}`;
         url += `&vol_ratio_min=${currentBreakoutParams.vol_ratio_min}`;
         url += `&price_5d_chg_min=${currentBreakoutParams.price_5d_chg_min}`;
         url += `&turnover_min=${currentBreakoutParams.turnover_min}`;
@@ -280,7 +284,8 @@ function fmtTurnoverLabel(val) {
 
 function fmtParamsSummary(c) {
     const mkt = c.market ? ` ${c.market}` : '';
-    return `週比≥${c.vol_ratio_min}× ｜ 5日≥${c.price_5d_chg_min}% ｜ 代金≥${fmtTurnoverLabel(c.min_turnover)}${mkt}`;
+    const tn  = c.top_n  ? ` ｜ 上位${c.top_n}銘柄` : '';
+    return `週比≥${c.vol_ratio_min}× ｜ 5日≥${c.price_5d_chg_min}% ｜ 代金≥${fmtTurnoverLabel(c.min_turnover)}${mkt}${tn}`;
 }
 
 function renderOptimizeResults(data) {
@@ -357,6 +362,7 @@ function applyOptimizeParams(params) {
         price_5d_chg_min: params.price_5d_chg_min,
         turnover_min:     params.min_turnover,
         market:           params.market || '',
+        top_n:            params.top_n  ?? 20,
     };
 
     // DBに保存（次回ページを開いたとき自動ロード）
@@ -369,6 +375,7 @@ function applyOptimizeParams(params) {
             price_5d_chg_min: params.price_5d_chg_min,
             turnover_min:     params.min_turnover,
             market:           params.market || '',
+            top_n:            params.top_n ?? 20,
             win_rate_20d:     params.win_rate_20d,
             avg_return_20d:   params.avg_return_20d,
             win_rate_10d:     params.win_rate_10d,
@@ -384,8 +391,9 @@ function applyOptimizeParams(params) {
     if (lbl) {
         const wr  = params.win_rate_20d  != null ? ` 勝率${params.win_rate_20d}%` : '';
         const ret = params.avg_return_20d != null ? ` 平均+${params.avg_return_20d}%` : '';
+        const tn  = params.top_n ? ` 上位${params.top_n}銘柄` : '';
         const today = new Date().toISOString().slice(0, 10);
-        lbl.innerHTML = `🤖 AI最適化済み（${today}）${wr}${ret} ／ ${fmtParamsSummary(params)}`;
+        lbl.innerHTML = `🤖 AI最適化済み（${today}）${wr}${ret} ／ ${fmtParamsSummary(params)}${tn}`;
         lbl.style.display = 'block';
         lbl.classList.add('auto-optimized');
     }

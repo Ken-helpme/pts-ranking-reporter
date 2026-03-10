@@ -1074,15 +1074,15 @@ class JQuantsClient:
             return {'success': False, 'error': '有効なテストデータなし'}
 
         # ── 5. ランダムサーチ n_trials 通り ──
-        # パラメータの探索空間（グリッドより大幅に広い連続空間）
-        vol_ratio_choices    = [round(x * 0.1, 1) for x in range(10, 51)]   # 1.0〜5.0
+        # パラメータの探索空間（top_nも変数化して勝率を最大化）
+        vol_ratio_choices    = [round(x * 0.5, 1) for x in range(2, 31)]    # 1.0〜15.0（0.5刻み）
         price_5d_chg_choices = [round(x * 0.5, 1) for x in range(-4, 21)]   # -2.0〜10.0
         # 売買代金: 1000万〜30億（対数スケールで均等サンプリング）
-        import math as _math
-        turnover_choices = [int(10 ** (_math.log10(10_000_000) + i *
-                             (_math.log10(3_000_000_000) - _math.log10(10_000_000)) / 49))
+        turnover_choices = [int(10 ** (math.log10(10_000_000) + i *
+                             (math.log10(3_000_000_000) - math.log10(10_000_000)) / 49))
                             for i in range(50)]
         market_choices = ['', '', '', 'プライム', 'スタンダード']  # '' を多めに
+        top_n_choices  = [3, 5, 7, 10, 15, 20]   # 上位何銘柄を選ぶか（少ないほど高シグナル）
 
         random.seed(42)  # 再現性のため固定シード（毎回同じ探索空間）
         seen = set()
@@ -1095,6 +1095,7 @@ class JQuantsClient:
                 random.choice(price_5d_chg_choices),
                 random.choice(turnover_choices),
                 random.choice(market_choices),
+                random.choice(top_n_choices),
             )
             if p not in seen:
                 seen.add(p)
@@ -1103,6 +1104,7 @@ class JQuantsClient:
                     'price_5d_chg_min': p[1],
                     'min_turnover':     p[2],
                     'market':           p[3],
+                    'top_n':            p[4],
                 })
 
         combo_results = []
@@ -1110,6 +1112,7 @@ class JQuantsClient:
             fwd_all = {5: [], 10: [], 20: []}
             total_picks = 0
             date_count  = 0
+            trial_top_n = p['top_n']
 
             for stocks in stock_universe.values():
                 filtered = [
@@ -1120,11 +1123,11 @@ class JQuantsClient:
                     and (not p['market'] or s['market'] == p['market'])
                 ]
                 for s in filtered:
-                    vs = min(s['vol_ratio'] / 5.0, 1.0)
+                    vs = min(s['vol_ratio'] / 10.0, 1.0)
                     ps = min(max(s['price_5d_chg'], 0) / 15.0, 1.0)
                     s['_s'] = vs * 0.5 + ps * 0.5
                 filtered.sort(key=lambda x: x['_s'], reverse=True)
-                top = filtered[:top_n]
+                top = filtered[:trial_top_n]
                 if not top:
                     continue
                 date_count  += 1
@@ -1149,8 +1152,11 @@ class JQuantsClient:
                 'win_rate_5d':   wr5,  'avg_return_5d':  ar5,  'n_5d':  n5,
                 'win_rate_10d':  wr10, 'avg_return_10d': ar10, 'n_10d': n10,
                 'win_rate_20d':  wr20, 'avg_return_20d': ar20, 'n_20d': n20,
+                'sample_size':   n20 or n10 or n5,  # 統計的信頼性の目安
             })
 
+        # 勝率×2 + 平均リターンでスコアリング（サンプル数3未満は除外）
+        combo_results = [c for c in combo_results if (c['sample_size'] or 0) >= 3]
         combo_results.sort(
             key=lambda x: ((x['win_rate_20d'] or 0) * 2 + (x['avg_return_20d'] or 0)),
             reverse=True
