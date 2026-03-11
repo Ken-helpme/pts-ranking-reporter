@@ -408,20 +408,35 @@ async function runHistoryValidation() {
 
         const jobId = startData.job_id;
 
-        // ② ポーリングで進捗表示
+        // ② ポーリングで進捗表示（最大15分タイムアウト）
         const loadingSpan = document.querySelector('#historyValidateLoading span');
-        let   done = false;
+        let done = false;
+        const deadline = Date.now() + 15 * 60 * 1000;
+
         while (!done) {
-            await new Promise(r => setTimeout(r, 3000));   // 3秒ごと
+            await new Promise(r => setTimeout(r, 3000));
+
+            if (Date.now() > deadline) {
+                results.innerHTML = `<div class="optimize-error">タイムアウト（15分）。もう一度お試しください。</div>`;
+                break;
+            }
+
             const pollRes  = await fetch(`/api/screening/validate_history_poll/${jobId}`);
             const pollData = await pollRes.json();
+
+            // サーバーリロードでjobが消えた場合
+            if (!pollData.success && !pollData.status) {
+                results.innerHTML = `<div class="optimize-error" style="color:#facc15">
+                    サーバーが再起動しました。もう一度ボタンを押してください。
+                </div>`;
+                done = true;
+                break;
+            }
 
             // 進捗メッセージ更新
             const progress = pollData.progress || [];
             if (loadingSpan && progress.length > 0) {
-                const current = progress[progress.length - 1];
-                loadingSpan.textContent =
-                    `(${progress.length}/5) ${current}`;
+                loadingSpan.textContent = `(${progress.length}/5) ${progress[progress.length - 1]}`;
             }
 
             if (pollData.status === 'done' || pollData.status === 'error') {
