@@ -29,18 +29,25 @@ class JQuantsClient:
         self._price_cache_time: Dict[str, float] = {}
 
     def _get(self, path: str, params: Optional[Dict] = None) -> Dict:
-        """API GETリクエスト"""
+        """API GETリクエスト（429レート制限時は最大3回リトライ）"""
         url = f"{self.BASE_URL}{path}"
-        try:
-            resp = self.session.get(url, params=params, timeout=30)
-            resp.raise_for_status()
-            return resp.json()
-        except requests.exceptions.HTTPError as e:
-            logger.error(f"J-Quants API error: {e} - {resp.text[:200]}")
-            return {"data": [], "error": str(e)}
-        except Exception as e:
-            logger.error(f"J-Quants request failed: {e}")
-            return {"data": [], "error": str(e)}
+        for attempt in range(3):
+            try:
+                resp = self.session.get(url, params=params, timeout=30)
+                if resp.status_code == 429:
+                    wait = (attempt + 1) * 3   # 3s, 6s, 9s
+                    logger.warning(f"Rate limit 429, {wait}秒待機して再試行...")
+                    time.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                return resp.json()
+            except requests.exceptions.HTTPError as e:
+                logger.error(f"J-Quants API error: {e} - {resp.text[:200]}")
+                return {"data": [], "error": str(e)}
+            except Exception as e:
+                logger.error(f"J-Quants request failed: {e}")
+                return {"data": [], "error": str(e)}
+        return {"data": [], "error": "Rate limit exceeded after retries"}
 
     # ========== マスターデータ ==========
 
@@ -899,7 +906,9 @@ class JQuantsClient:
     def validate_params_at_dates(self, params: Dict, test_dates: List[str]) -> Dict:
         """
         指定したパラメータを各過去時点でテストし、各日付の結果を返す。
-        各テスト日を独立したウィンドウで順番に処理する（レート制限対策）。
+
+        全ウィンドウのカレンダー日付を一括並列フェッチ（高速）しつつ、
+        各テスト日の評価は自分の窓データのみを使う（クロスコンタミネーション防止）。
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -932,33 +941,39 @@ class JQuantsClient:
 
         results = []
 
-        for td in test_dates:
-            # ── 各テスト日を独立したウィンドウで処理（レート制限対策） ──
+        for i, td in enumerate(test_dates):
             if td >= today_real:
                 results.append({'date': td, 'error': '未来の日付'})
                 continue
 
+            # ウィンドウ間に少し待機（レート制限対策）
+            if i > 0:
+                time.sleep(2)
+
             dt    = datetime.strptime(td, "%Y-%m-%d")
             start = dt - timedelta(days=40)
-            end   = min(dt + timedelta(days=35),
+            end   = min(dt + timedelta(days=50),
                         datetime.strptime(today_real, "%Y-%m-%d"))
 
+            # 平日のみフェッチ（土日はAPIが0件を返すだけなので省略して高速化）
             cal_dates = []
             d = start
             while d <= end:
-                cal_dates.append(d.strftime("%Y-%m-%d"))
+                if d.weekday() < 5:   # 月〜金
+                    cal_dates.append(d.strftime("%Y-%m-%d"))
                 d += timedelta(days=1)
 
-            logger.info(f"履歴検証 {td}: {len(cal_dates)}日分フェッチ中...")
+            logger.info(f"履歴検証 {td}: 平日{len(cal_dates)}日分フェッチ中...")
 
-            # このウィンドウだけフェッチ（~75日分 ≈ 55営業日）
             window_data: Dict[str, Dict] = {}
-            with ThreadPoolExecutor(max_workers=6) as ex:
+            with ThreadPoolExecutor(max_workers=4) as ex:
                 futures = {ex.submit(_fetch, date): date for date in cal_dates}
                 for fut in as_completed(futures):
                     date, result = fut.result()
                     if result:
                         window_data[date] = result
+
+            logger.info(f"  {td}: {len(window_data)}日取得")
 
             tds = sorted(window_data.keys())
 
