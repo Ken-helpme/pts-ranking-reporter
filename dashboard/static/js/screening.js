@@ -390,6 +390,7 @@ async function runHistoryValidation() {
     const panel   = document.getElementById('historyValidatePanel');
     const loading = document.getElementById('historyValidateLoading');
     const results = document.getElementById('historyValidateResults');
+    const labels  = ['3ヶ月前', '6ヶ月前', '1年前', '2年前', '3年前'];
 
     btn.disabled = true;
     panel.style.display = 'block';
@@ -397,13 +398,41 @@ async function runHistoryValidation() {
     results.innerHTML = '';
 
     try {
-        const res  = await fetch('/api/screening/validate_history', {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ params }),
+        // ① バックグラウンドジョブを開始
+        const startRes  = await fetch('/api/screening/validate_history', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ params }),
         });
-        const data = await res.json();
-        renderHistoryValidation(data);
+        const startData = await startRes.json();
+        if (!startData.success) throw new Error(startData.error || '開始失敗');
+
+        const jobId = startData.job_id;
+
+        // ② ポーリングで進捗表示
+        const loadingSpan = document.querySelector('#historyValidateLoading span');
+        let   done = false;
+        while (!done) {
+            await new Promise(r => setTimeout(r, 3000));   // 3秒ごと
+            const pollRes  = await fetch(`/api/screening/validate_history_poll/${jobId}`);
+            const pollData = await pollRes.json();
+
+            // 進捗メッセージ更新
+            const progress = pollData.progress || [];
+            if (loadingSpan && progress.length > 0) {
+                const current = progress[progress.length - 1];
+                loadingSpan.textContent =
+                    `(${progress.length}/5) ${current}`;
+            }
+
+            if (pollData.status === 'done' || pollData.status === 'error') {
+                done = true;
+                if (pollData.result) {
+                    renderHistoryValidation(pollData.result);
+                } else {
+                    results.innerHTML = `<div class="optimize-error">エラー: 結果なし</div>`;
+                }
+            }
+        }
     } catch (e) {
         results.innerHTML = `<div class="optimize-error">通信エラー: ${escHtml(e.message)}</div>`;
     } finally {

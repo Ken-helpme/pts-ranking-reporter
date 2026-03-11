@@ -334,9 +334,12 @@ def screening_search():
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})
 
+_validate_jobs: dict = {}   # job_id -> {'status': ..., 'result': ...}
+
 @app.route('/api/screening/validate_history', methods=['POST'])
 def screening_validate_history():
-    """現在の最良条件を3ヶ月前・6ヶ月前・1年前・2年前・3年前でテスト"""
+    """バックグラウンドで履歴検証を開始し、job_id を返す"""
+    import threading, uuid
     try:
         body   = request.get_json(silent=True) or {}
         params = body.get('params', {})
@@ -358,19 +361,50 @@ def screening_validate_history():
             except ValueError:
                 return date(today.year - y, today.month, 28).isoformat()
 
-        test_dates = [
-            months_ago(3),
-            months_ago(6),
-            years_ago(1),
-            years_ago(2),
-            years_ago(3),
-        ]
-        result = jquants.validate_params_at_dates(params=params, test_dates=test_dates)
-        return jsonify(result)
+        test_dates = [months_ago(3), months_ago(6), years_ago(1), years_ago(2), years_ago(3)]
+        labels     = ['3ヶ月前', '6ヶ月前', '1年前', '2年前', '3年前']
+
+        job_id = str(uuid.uuid4())[:8]
+        _validate_jobs[job_id] = {'status': 'running', 'progress': [], 'result': None}
+
+        def _run():
+            try:
+                # 1時点ずつ処理してプログレス更新
+                results = []
+                for i, (td, label) in enumerate(zip(test_dates, labels)):
+                    _validate_jobs[job_id]['progress'].append(f'{label}（{td}）を処理中...')
+                    partial = jquants.validate_params_at_dates(params=params, test_dates=[td])
+                    if partial.get('success') and partial.get('results'):
+                        results.append(partial['results'][0])
+                    else:
+                        results.append({'date': td, 'error': partial.get('error', '取得失敗')})
+
+                _validate_jobs[job_id]['status'] = 'done'
+                _validate_jobs[job_id]['result'] = {
+                    'success': True, 'params': params,
+                    'results': results, 'total_time': '–'
+                }
+            except Exception as e:
+                _validate_jobs[job_id]['status'] = 'error'
+                _validate_jobs[job_id]['result'] = {'success': False, 'error': str(e)}
+
+        threading.Thread(target=_run, daemon=True).start()
+        return jsonify({'success': True, 'job_id': job_id})
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/screening/validate_history_poll/<job_id>')
+def screening_validate_history_poll(job_id):
+    """ポーリング: 履歴検証の進捗・結果を返す"""
+    job = _validate_jobs.get(job_id)
+    if not job:
+        return jsonify({'success': False, 'error': 'job not found'})
+    return jsonify({
+        'status':   job['status'],
+        'progress': job.get('progress', []),
+        'result':   job.get('result'),
+    })
 
 @app.route('/api/screening/optimize', methods=['GET', 'POST'])
 def screening_optimize():
