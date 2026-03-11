@@ -35,7 +35,7 @@ class JQuantsClient:
             try:
                 resp = self.session.get(url, params=params, timeout=30)
                 if resp.status_code == 429:
-                    wait = (attempt + 1) * 3   # 3s, 6s, 9s
+                    wait = (attempt + 1) * 15  # 15s, 30s, 45s
                     logger.warning(f"Rate limit 429, {wait}秒待機して再試行...")
                     time.sleep(wait)
                     continue
@@ -946,9 +946,9 @@ class JQuantsClient:
                 results.append({'date': td, 'error': '未来の日付'})
                 continue
 
-            # ウィンドウ間に少し待機（レート制限対策）
+            # ウィンドウ間に待機（レート制限対策: 前ウィンドウのリクエストが落ち着くまで）
             if i > 0:
-                time.sleep(2)
+                time.sleep(10)
 
             dt    = datetime.strptime(td, "%Y-%m-%d")
             start = dt - timedelta(days=40)
@@ -966,7 +966,7 @@ class JQuantsClient:
             logger.info(f"履歴検証 {td}: 平日{len(cal_dates)}日分フェッチ中...")
 
             window_data: Dict[str, Dict] = {}
-            with ThreadPoolExecutor(max_workers=4) as ex:
+            with ThreadPoolExecutor(max_workers=2) as ex:
                 futures = {ex.submit(_fetch, date): date for date in cal_dates}
                 for fut in as_completed(futures):
                     date, result = fut.result()
