@@ -435,14 +435,21 @@ function renderHistoryValidation(data) {
         }
         const wr   = r.win_rate_20d;
         const ar   = r.avg_return_20d;
+        const noStocks = r.n_stocks === 0;
+        const noFwd    = r.no_fwd_data;
+
         const wrCl = wr === null ? '' : wr >= 80 ? 'style="color:#4ade80;font-weight:700"'
                                       : wr >= 60 ? 'style="color:#facc15"'
                                       : 'style="color:#f87171"';
         const arCl = ar === null ? '' : ar >= 0 ? 'style="color:#4ade80"' : 'style="color:#f87171"';
 
-        // 20d forward データがない場合（直近すぎる）
-        const wrTxt = wr !== null ? `${wr}%` : '計算中';
-        const arTxt = ar !== null ? `${ar > 0 ? '+' : ''}${ar}%` : '–';
+        const wrTxt = noStocks ? '<span style="color:#888">該当なし</span>'
+                    : noFwd   ? '<span style="color:#888">20日未経過</span>'
+                    : wr !== null ? `${wr}%` : '–';
+        const arTxt = noStocks || noFwd ? '–'
+                    : ar !== null ? `${ar > 0 ? '+' : ''}${ar}%` : '–';
+        const wr5txt  = r.win_rate_5d  !== null ? r.win_rate_5d  + '%' : '–';
+        const wr10txt = r.win_rate_10d !== null ? r.win_rate_10d + '%' : '–';
 
         rows += `<tr>
             <td style="font-weight:600">${label}</td>
@@ -450,7 +457,7 @@ function renderHistoryValidation(data) {
             <td>${r.n_stocks}銘柄</td>
             <td ${wrCl}>${wrTxt}</td>
             <td ${arCl}>${arTxt}</td>
-            <td style="font-size:11px;color:#888">${r.win_rate_5d !== null ? r.win_rate_5d + '%' : '–'} / ${r.win_rate_10d !== null ? r.win_rate_10d + '%' : '–'} / ${wrTxt}</td>
+            <td style="font-size:11px;color:#888">${wr5txt} / ${wr10txt} / ${noStocks || noFwd ? '–' : (wr !== null ? wr + '%' : '–')}</td>
         </tr>`;
     });
 

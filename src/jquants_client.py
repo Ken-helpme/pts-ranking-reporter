@@ -898,62 +898,30 @@ class JQuantsClient:
 
     def validate_params_at_dates(self, params: Dict, test_dates: List[str]) -> Dict:
         """
-        指定したパラメータを5つの過去時点でテストし、各日付の結果を返す。
-        test_dates は ['2024-12-10', '2024-09-10', ...] 形式の文字列リスト。
+        指定したパラメータを各過去時点でテストし、各日付の結果を返す。
+        各テスト日を独立したウィンドウで順番に処理する（レート制限対策）。
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         t0         = time.time()
         today_real = datetime.now().strftime("%Y-%m-%d")
 
-        # 各テスト日について前後のデータ範囲を収集
-        needed_dates: set = set()
-        valid_test_dates  = [td for td in test_dates if td < today_real]
-        if not valid_test_dates:
-            return {"success": False, "error": "有効なテスト日付なし"}
+        master      = self.get_master()
+        master_dict = {item["Code"]: item for item in master}
+        valid_codes = {item["Code"] for item in master
+                       if item.get("MktNm") != "TOKYO PRO MARKET"}
 
-        for td in valid_test_dates:
-            dt    = datetime.strptime(td, "%Y-%m-%d")
-            start = dt - timedelta(days=40)   # 25営業日 ≈ 35暦日 + マージン
-            end   = min(dt + timedelta(days=35),
-                        datetime.strptime(today_real, "%Y-%m-%d"))
-            d = start
-            while d <= end:
-                needed_dates.add(d.strftime("%Y-%m-%d"))
-                d += timedelta(days=1)
-
-        cal_dates = sorted(needed_dates)
-        logger.info(f"履歴検証: {len(valid_test_dates)}時点, {len(cal_dates)}日分フェッチ")
-
-        # 並列フェッチ
-        all_data: Dict[str, Dict] = {}
+        vol_ratio_min    = float(params.get('vol_ratio_min', 5.0))
+        price_5d_chg_min = float(params.get('price_5d_chg_min', 0.0))
+        min_turnover     = float(params.get('turnover_min', params.get('min_turnover', 500_000_000)))
+        market           = params.get('market', '')
+        top_n            = int(params.get('top_n', 20))
 
         def _fetch(date):
             data = self._fetch_prices_for_date(date)
             if data and len(data) > 100:
                 return date, {p["Code"]: p for p in data}
             return date, None
-
-        with ThreadPoolExecutor(max_workers=8) as ex:
-            futures = {ex.submit(_fetch, date): date for date in cal_dates}
-            for fut in as_completed(futures):
-                date, result = fut.result()
-                if result:
-                    all_data[date] = result
-
-        trading_days_sorted = sorted(all_data.keys())
-
-        master      = self.get_master()
-        master_dict = {item["Code"]: item for item in master}
-        valid_codes = {item["Code"] for item in master
-                       if item.get("MktNm") != "TOKYO PRO MARKET"}
-
-        # パラメータ展開
-        vol_ratio_min    = float(params.get('vol_ratio_min', 5.0))
-        price_5d_chg_min = float(params.get('price_5d_chg_min', 0.0))
-        min_turnover     = float(params.get('turnover_min', params.get('min_turnover', 500_000_000)))
-        market           = params.get('market', '')
-        top_n            = int(params.get('top_n', 20))
 
         def _wr(stocks, n):
             vals = [s.get(f'fwd_{n}d') for s in stocks if s.get(f'fwd_{n}d') is not None]
@@ -963,19 +931,48 @@ class JQuantsClient:
             return round(w / len(vals) * 100, 1), round(sum(vals) / len(vals), 2)
 
         results = []
+
         for td in test_dates:
+            # ── 各テスト日を独立したウィンドウで処理（レート制限対策） ──
             if td >= today_real:
-                results.append({'date': td, 'label': td, 'error': '未来の日付'})
+                results.append({'date': td, 'error': '未来の日付'})
                 continue
 
-            before = [d for d in trading_days_sorted if d <= td]
+            dt    = datetime.strptime(td, "%Y-%m-%d")
+            start = dt - timedelta(days=40)
+            end   = min(dt + timedelta(days=35),
+                        datetime.strptime(today_real, "%Y-%m-%d"))
+
+            cal_dates = []
+            d = start
+            while d <= end:
+                cal_dates.append(d.strftime("%Y-%m-%d"))
+                d += timedelta(days=1)
+
+            logger.info(f"履歴検証 {td}: {len(cal_dates)}日分フェッチ中...")
+
+            # このウィンドウだけフェッチ（~75日分 ≈ 55営業日）
+            window_data: Dict[str, Dict] = {}
+            with ThreadPoolExecutor(max_workers=6) as ex:
+                futures = {ex.submit(_fetch, date): date for date in cal_dates}
+                for fut in as_completed(futures):
+                    date, result = fut.result()
+                    if result:
+                        window_data[date] = result
+
+            tds = sorted(window_data.keys())
+
+            before = [d for d in tds if d <= td]
             if len(before) < 8:
-                results.append({'date': td, 'label': td, 'error': 'データ不足（プランの取得期間外の可能性）'})
+                results.append({
+                    'date': td,
+                    'error': f'データ取得失敗（{len(before)}日分のみ取得、プランの取得期間外の可能性）',
+                })
                 continue
 
             before     = before[-25:]
             today_date = before[-1]
-            after      = [d for d in trading_days_sorted if d > today_date]
+            after      = [d for d in tds if d > today_date]
 
             fwd_map: Dict[int, Dict] = {}
             for n in [5, 10, 20]:
@@ -983,19 +980,19 @@ class JQuantsClient:
                     t = after[n - 1]
                     fwd_map[n] = {
                         code: float(pdata.get("AdjC") or pdata.get("C"))
-                        for code, pdata in all_data[t].items()
+                        for code, pdata in window_data[t].items()
                         if (pdata.get("AdjC") or pdata.get("C"))
                     }
 
             stocks_list = []
+            today_prices = window_data.get(today_date, {})
             for code in valid_codes:
-                if code not in all_data.get(today_date, {}):
+                if code not in today_prices:
                     continue
-                today_prices = all_data[today_date]
 
                 closes, volumes = [], []
                 for d in before:
-                    pdata = all_data[d].get(code)
+                    pdata = window_data[d].get(code)
                     if not pdata:
                         continue
                     c = pdata.get("AdjC") or pdata.get("C")
@@ -1039,7 +1036,6 @@ class JQuantsClient:
                     **fwd,
                 })
 
-            # フィルタ適用
             filtered = [
                 s for s in stocks_list
                 if s['vol_ratio']    >= vol_ratio_min
@@ -1058,6 +1054,8 @@ class JQuantsClient:
             wr10, ar10 = _wr(top, 10)
             wr5,  ar5  = _wr(top,  5)
 
+            no_fwd = not fwd_map.get(20)  # 20日後データがない（直近すぎる）
+
             results.append({
                 'date':           td,
                 'actual_date':    today_date,
@@ -1068,6 +1066,7 @@ class JQuantsClient:
                 'avg_return_10d': ar10,
                 'win_rate_5d':    wr5,
                 'avg_return_5d':  ar5,
+                'no_fwd_data':    no_fwd,
                 'stocks': [
                     {
                         'code':         s['code'],
@@ -1080,6 +1079,7 @@ class JQuantsClient:
                     for s in top
                 ],
             })
+            logger.info(f"  → actual={today_date}, 銘柄{len(top)}件, 勝率={wr20}%")
 
         return {
             'success':    True,
