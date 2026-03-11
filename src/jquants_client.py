@@ -35,7 +35,7 @@ class JQuantsClient:
             try:
                 resp = self.session.get(url, params=params, timeout=30)
                 if resp.status_code == 429:
-                    wait = (attempt + 1) * 15  # 15s, 30s, 45s
+                    wait = (attempt + 1) * 5   # 5s, 10s, 15s
                     logger.warning(f"Rate limit 429, {wait}秒待機して再試行...")
                     time.sleep(wait)
                     continue

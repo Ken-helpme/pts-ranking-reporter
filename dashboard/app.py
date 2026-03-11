@@ -334,17 +334,23 @@ def screening_search():
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})
 
-_validate_jobs: dict = {}   # job_id -> {'status': ..., 'result': ...}
+_validate_jobs: dict = {}        # job_id -> {status, progress, result, cancelled}
+_current_validate_job: list = [None]  # [job_id] — 現在実行中のジョブ（1つだけ）
 
 @app.route('/api/screening/validate_history', methods=['POST'])
 def screening_validate_history():
-    """バックグラウンドで履歴検証を開始し、job_id を返す"""
+    """バックグラウンドで履歴検証を開始し、job_id を返す（前のジョブは自動キャンセル）"""
     import threading, uuid
     try:
         body   = request.get_json(silent=True) or {}
         params = body.get('params', {})
         if not params:
             return jsonify({'success': False, 'error': 'params が指定されていません'})
+
+        # 前のジョブをキャンセル（同時実行防止）
+        prev = _current_validate_job[0]
+        if prev and prev in _validate_jobs:
+            _validate_jobs[prev]['cancelled'] = True
 
         from datetime import date
         today = date.today()
@@ -365,25 +371,30 @@ def screening_validate_history():
         labels     = ['3ヶ月前', '6ヶ月前', '1年前', '2年前', '3年前']
 
         job_id = str(uuid.uuid4())[:8]
-        _validate_jobs[job_id] = {'status': 'running', 'progress': [], 'result': None}
+        _validate_jobs[job_id] = {'status': 'running', 'progress': [], 'result': None, 'cancelled': False}
+        _current_validate_job[0] = job_id
 
         def _run():
             try:
-                # 1時点ずつ処理してプログレス更新
                 results = []
-                for i, (td, label) in enumerate(zip(test_dates, labels)):
+                for td, label in zip(test_dates, labels):
+                    if _validate_jobs[job_id].get('cancelled'):
+                        break
                     _validate_jobs[job_id]['progress'].append(f'{label}（{td}）を処理中...')
                     partial = jquants.validate_params_at_dates(params=params, test_dates=[td])
+                    if _validate_jobs[job_id].get('cancelled'):
+                        break
                     if partial.get('success') and partial.get('results'):
                         results.append(partial['results'][0])
                     else:
                         results.append({'date': td, 'error': partial.get('error', '取得失敗')})
 
-                _validate_jobs[job_id]['status'] = 'done'
-                _validate_jobs[job_id]['result'] = {
-                    'success': True, 'params': params,
-                    'results': results, 'total_time': '–'
-                }
+                if not _validate_jobs[job_id].get('cancelled'):
+                    _validate_jobs[job_id]['status'] = 'done'
+                    _validate_jobs[job_id]['result'] = {
+                        'success': True, 'params': params,
+                        'results': results, 'total_time': '–'
+                    }
             except Exception as e:
                 _validate_jobs[job_id]['status'] = 'error'
                 _validate_jobs[job_id]['result'] = {'success': False, 'error': str(e)}
