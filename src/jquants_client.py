@@ -713,7 +713,7 @@ class JQuantsClient:
                 return date, {p["Code"]: p for p in data}
             return date, None
 
-        with ThreadPoolExecutor(max_workers=8) as ex:
+        with ThreadPoolExecutor(max_workers=4) as ex:  # レート制限対策
             futures = {ex.submit(_fetch, date): date for date in cal_dates}
             for fut in as_completed(futures):
                 date, result = fut.result()
@@ -881,17 +881,30 @@ class JQuantsClient:
                 'win_rate_20d':  wr20, 'avg_return_20d': ar20, 'n_20d': n20,
             })
 
-        # 20日勝率×2 + 平均リターン でスコアリング（勝率重視）
-        combo_results.sort(
-            key=lambda x: ((x['win_rate_20d'] or 0) * 2 + (x['avg_return_20d'] or 0)),
-            reverse=True
-        )
+        # ── スコアリング（発動頻度を考慮） ──
+        # 条件が発動したテスト日の割合（カバレッジ）を重みとして乗算
+        # → 「100%勝率・3日発動」より「65%勝率・20日発動」を優先
+        total_dates = len(stock_universe)
+        min_date_count = max(3, total_dates // 5)   # 最低でも全体の20%の日付で発動
+        min_avg_picks  = 2.0                         # 平均2銘柄以上
+
+        combo_results = [
+            c for c in combo_results
+            if c['date_count'] >= min_date_count
+            and (c['avg_picks'] or 0) >= min_avg_picks
+        ]
+
+        def _score_20d(x):
+            coverage = x['date_count'] / max(total_dates, 1)   # 0〜1
+            return (x['win_rate_20d'] or 0) * coverage * 2 + (x['avg_return_20d'] or 0)
+
+        def _score_10d(x):
+            coverage = x['date_count'] / max(total_dates, 1)
+            return (x['win_rate_10d'] or 0) * coverage * 2 + (x['avg_return_10d'] or 0)
+
+        combo_results.sort(key=_score_20d, reverse=True)
         best_20d = combo_results[0] if combo_results else None
-        best_10d = sorted(
-            combo_results,
-            key=lambda x: ((x['win_rate_10d'] or 0) * 2 + (x['avg_return_10d'] or 0)),
-            reverse=True
-        )[0] if combo_results else None
+        best_10d = sorted(combo_results, key=_score_10d, reverse=True)[0] if combo_results else None
 
         return {
             'success':            True,
