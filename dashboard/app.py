@@ -697,16 +697,341 @@ def screening_run_auto_optimize():
         return jsonify({'success': False, 'error': str(e)})
 
 
+# ========== クオンツ分析 ==========
+
+# .env ファイルを読み込み
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+except ImportError:
+    pass
+
+_quant_jobs: dict = {}  # job_id -> {status, logs, current_step, progress, report, error}
+
+@app.route('/quant')
+def quant_page():
+    """クオンツ分析ページ"""
+    return render_template('quant.html')
+
+@app.route('/api/quant/run', methods=['POST'])
+def quant_run():
+    """クオンツ分析パイプラインをバックグラウンドで実行"""
+    import threading
+    import uuid
+
+    body = request.get_json(silent=True) or {}
+    step = body.get('step', 'all')
+    fast = body.get('fast', True)
+
+    job_id = str(uuid.uuid4())[:8]
+    _quant_jobs[job_id] = {
+        'status': 'running',
+        'logs': [],
+        'current_step': None,
+        'progress': 0,
+        'progress_label': '開始中...',
+        'report': None,
+        'error': None,
+    }
+
+    def _run():
+        import logging
+
+        job = _quant_jobs[job_id]
+
+        class JobLogHandler(logging.Handler):
+            def emit(self, record):
+                msg = record.getMessage()
+                log_type = 'info'
+                if record.levelno >= logging.ERROR:
+                    log_type = 'error'
+                elif record.levelno >= logging.WARNING:
+                    log_type = 'error'
+                elif 'complete' in msg.lower() or '完了' in msg:
+                    log_type = 'success'
+                elif 'STEP' in msg or '===' in msg:
+                    log_type = 'step'
+                job['logs'].append({'msg': msg, 'type': log_type})
+
+        logger = logging.getLogger('quant_research')
+        logger.setLevel(logging.INFO)
+        handler = JobLogHandler()
+        logger.addHandler(handler)
+
+        try:
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+            steps_order = ['data', 'features', 'backtest', 'optimize', 'ml', 'regime', 'report']
+            if step == 'all':
+                target_steps = steps_order
+            else:
+                idx = steps_order.index(step) if step in steps_order else 0
+                target_steps = steps_order[:idx + 1]
+
+            total = len(target_steps)
+
+            # STEP 1: data
+            if 'data' in target_steps:
+                job['current_step'] = 'data'
+                job['progress'] = 0 / total
+                job['progress_label'] = 'データ取得中...'
+
+                from quant_research.data_fetcher import fetch_all, prepare_price_dataframe
+                raw_data = fetch_all(years=10)
+                df = prepare_price_dataframe(raw_data['prices'], raw_data['master'])
+
+                import pandas as pd
+                df.to_pickle(os.path.join(os.path.dirname(__file__), '..', 'quant_research', 'data', '_intermediate_df_prepared.pkl'))
+                pd.to_pickle(raw_data, os.path.join(os.path.dirname(__file__), '..', 'quant_research', 'data', '_intermediate_raw_data.pkl'))
+                job['logs'].append({'msg': f'データ取得完了: {df["Code"].nunique():,}銘柄, {len(df):,}行', 'type': 'success'})
+
+            # STEP 2: features
+            if 'features' in target_steps:
+                job['current_step'] = 'features'
+                job['progress'] = 1 / total
+                job['progress_label'] = '特徴量計算中...'
+
+                import pandas as pd
+                data_dir = os.path.join(os.path.dirname(__file__), '..', 'quant_research', 'data')
+                df = pd.read_pickle(os.path.join(data_dir, '_intermediate_df_prepared.pkl'))
+                raw_data = pd.read_pickle(os.path.join(data_dir, '_intermediate_raw_data.pkl'))
+
+                from quant_research.feature_engine import compute_all_features
+                df = compute_all_features(df, fins=raw_data.get('fins_summary'), forward_periods=[3, 5, 10])
+                df.to_pickle(os.path.join(data_dir, '_intermediate_df_features.pkl'))
+                job['logs'].append({'msg': f'特徴量計算完了: {len(df.columns)}列', 'type': 'success'})
+
+            # STEP 3-4: backtest
+            if 'backtest' in target_steps:
+                job['current_step'] = 'backtest'
+                job['progress'] = 2 / total
+                job['progress_label'] = 'バックテスト中...'
+
+                import pandas as pd
+                data_dir = os.path.join(os.path.dirname(__file__), '..', 'quant_research', 'data')
+                df = pd.read_pickle(os.path.join(data_dir, '_intermediate_df_features.pkl'))
+
+                from quant_research.backtester import split_train_test, run_batch_backtest, results_to_dataframe
+                from quant_research.screener import generate_random_conditions
+                train_df, test_df = split_train_test(df)
+                n_conds = 5000 if fast else 50000
+                conditions = generate_random_conditions(n=n_conds, seed=42)
+                results = run_batch_backtest(train_df, conditions, show_progress=False)
+
+                train_df.to_pickle(os.path.join(data_dir, '_intermediate_train_df.pkl'))
+                test_df.to_pickle(os.path.join(data_dir, '_intermediate_test_df.pkl'))
+                pd.to_pickle(results, os.path.join(data_dir, '_results_backtest.pkl'))
+                job['logs'].append({'msg': f'バックテスト完了: {len(results):,}条件が有効', 'type': 'success'})
+
+            # STEP 5: optimize
+            if 'optimize' in target_steps:
+                job['current_step'] = 'optimize'
+                job['progress'] = 3 / total
+                job['progress_label'] = '最適化中...'
+
+                import pandas as pd
+                data_dir = os.path.join(os.path.dirname(__file__), '..', 'quant_research', 'data')
+                train_df = pd.read_pickle(os.path.join(data_dir, '_intermediate_train_df.pkl'))
+                test_df = pd.read_pickle(os.path.join(data_dir, '_intermediate_test_df.pkl'))
+
+                from quant_research.optimizer import run_full_optimization
+                from quant_research.backtester import evaluate_out_of_sample
+                opt_results = run_full_optimization(
+                    train_df,
+                    random_trials=5000 if fast else 50000,
+                    bayesian_trials=200 if fast else 2000,
+                    ga_pop=50 if fast else 200,
+                    ga_gen=20 if fast else 100,
+                    show_progress=False,
+                )
+                oos = evaluate_out_of_sample(opt_results['all'], test_df, top_n=30)
+
+                pd.to_pickle(opt_results, os.path.join(data_dir, '_results_optimization_results.pkl'))
+                pd.to_pickle(oos, os.path.join(data_dir, '_results_oos_results.pkl'))
+                job['logs'].append({'msg': f'最適化完了: {len(opt_results["all"]):,}条件', 'type': 'success'})
+
+            # STEP 6: ml
+            if 'ml' in target_steps:
+                job['current_step'] = 'ml'
+                job['progress'] = 4 / total
+                job['progress_label'] = '機械学習モデル訓練中...'
+
+                import pandas as pd
+                data_dir = os.path.join(os.path.dirname(__file__), '..', 'quant_research', 'data')
+                df = pd.read_pickle(os.path.join(data_dir, '_intermediate_df_features.pkl'))
+
+                from quant_research.ml_models import run_walk_forward_cv
+                ml_results = run_walk_forward_cv(df, optimize=(not fast))
+                pd.to_pickle(ml_results, os.path.join(data_dir, '_results_ml_results.pkl'))
+
+                for name, res in ml_results.items():
+                    avg = res.get('metrics_avg', {})
+                    job['logs'].append({'msg': f'{name}: AUC={avg.get("roc_auc", 0):.4f}', 'type': 'success'})
+
+            # STEP 7: regime
+            if 'regime' in target_steps:
+                job['current_step'] = 'regime'
+                job['progress'] = 5 / total
+                job['progress_label'] = 'レジーム分析中...'
+
+                import pandas as pd
+                data_dir = os.path.join(os.path.dirname(__file__), '..', 'quant_research', 'data')
+                df = pd.read_pickle(os.path.join(data_dir, '_intermediate_df_features.pkl'))
+                raw_data = pd.read_pickle(os.path.join(data_dir, '_intermediate_raw_data.pkl'))
+
+                from quant_research.regime_analyzer import classify_regime, merge_regime, backtest_by_regime, regime_performance_summary, get_current_regime
+
+                index_df = raw_data.get('topix')
+                if index_df is None or (hasattr(index_df, 'empty') and index_df.empty):
+                    index_df = raw_data.get('nikkei')
+
+                current_regime = 'unknown'
+                regime_summary = pd.DataFrame()
+                regime_bt = {}
+
+                if index_df is not None and not index_df.empty:
+                    regime_df = classify_regime(index_df)
+                    current_regime = get_current_regime(index_df)
+
+                    opt_results = pd.read_pickle(os.path.join(data_dir, '_results_optimization_results.pkl'))
+                    top_conditions = [r.condition for r in opt_results.get('all', [])[:20]]
+                    if top_conditions:
+                        df_regime = merge_regime(df, regime_df)
+                        regime_bt = backtest_by_regime(df_regime, top_conditions)
+                        regime_summary = regime_performance_summary(regime_bt)
+
+                pd.to_pickle(regime_bt, os.path.join(data_dir, '_results_regime_results.pkl'))
+                regime_summary.to_pickle(os.path.join(data_dir, '_intermediate_regime_summary.pkl'))
+                pd.to_pickle(current_regime, os.path.join(data_dir, '_results_current_regime.pkl'))
+
+                job['logs'].append({'msg': f'現在の市場レジーム: {current_regime}', 'type': 'success'})
+
+            # STEP 8: report
+            if 'report' in target_steps:
+                job['current_step'] = 'report'
+                job['progress'] = 6 / total
+                job['progress_label'] = 'レポート生成中...'
+
+                import pandas as pd
+                data_dir = os.path.join(os.path.dirname(__file__), '..', 'quant_research', 'data')
+                df = pd.read_pickle(os.path.join(data_dir, '_intermediate_df_features.pkl'))
+                opt_results = pd.read_pickle(os.path.join(data_dir, '_results_optimization_results.pkl'))
+
+                ml_results = None
+                try: ml_results = pd.read_pickle(os.path.join(data_dir, '_results_ml_results.pkl'))
+                except FileNotFoundError: pass
+
+                regime_results = None
+                try: regime_results = pd.read_pickle(os.path.join(data_dir, '_results_regime_results.pkl'))
+                except FileNotFoundError: pass
+
+                regime_summary = pd.DataFrame()
+                try: regime_summary = pd.read_pickle(os.path.join(data_dir, '_intermediate_regime_summary.pkl'))
+                except FileNotFoundError: pass
+
+                current_regime = 'unknown'
+                try: current_regime = pd.read_pickle(os.path.join(data_dir, '_results_current_regime.pkl'))
+                except FileNotFoundError: pass
+
+                from quant_research.reporter import (
+                    generate_final_report,
+                    plot_equity_curves, plot_optimization_landscape,
+                    plot_feature_importance, plot_regime_performance,
+                )
+
+                report = generate_final_report(
+                    optimization_results=opt_results or {},
+                    ml_results=ml_results or {},
+                    regime_results=regime_results or {},
+                    regime_summary=regime_summary,
+                    df=df,
+                    current_regime=current_regime or 'unknown',
+                )
+
+                report_dir = os.path.join(data_dir, 'reports')
+                os.makedirs(report_dir, exist_ok=True)
+
+                charts = []
+                if opt_results and 'all' in opt_results and opt_results['all']:
+                    top3 = opt_results['all'][:3]
+                    plot_equity_curves(top3, labels=['Best WR', 'Best Return', 'Best Stable'],
+                                       save_path=os.path.join(report_dir, 'equity_curves.png'))
+                    charts.append('equity_curves.png')
+                    plot_optimization_landscape(opt_results['all'][:500],
+                                                save_path=os.path.join(report_dir, 'optimization_landscape.png'))
+                    charts.append('optimization_landscape.png')
+
+                if ml_results:
+                    plot_feature_importance(ml_results, save_path=os.path.join(report_dir, 'feature_importance.png'))
+                    charts.append('feature_importance.png')
+
+                if regime_summary is not None and not regime_summary.empty:
+                    plot_regime_performance(regime_summary, save_path=os.path.join(report_dir, 'regime_performance.png'))
+                    charts.append('regime_performance.png')
+
+                report['charts'] = charts
+                job['report'] = report
+                job['logs'].append({'msg': f'レポート生成完了 — シグナル銘柄: {len(report.get("current_signals", []))}件', 'type': 'success'})
+
+            job['status'] = 'done'
+            job['progress'] = 1.0
+            job['progress_label'] = '完了'
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            job['status'] = 'error'
+            job['error'] = str(e)
+            job['logs'].append({'msg': f'ERROR: {e}', 'type': 'error'})
+        finally:
+            logger.removeHandler(handler)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'success': True, 'job_id': job_id})
+
+
+@app.route('/api/quant/status/<job_id>')
+def quant_status(job_id):
+    """ジョブの進捗・結果を返す"""
+    job = _quant_jobs.get(job_id)
+    if not job:
+        return jsonify({'status': 'not_found', 'error': 'Job not found'})
+    return jsonify({
+        'status': job['status'],
+        'logs': job['logs'],
+        'current_step': job['current_step'],
+        'progress': job['progress'],
+        'progress_label': job['progress_label'],
+        'report': job['report'],
+        'error': job['error'],
+    })
+
+
+@app.route('/api/quant/chart/<filename>')
+def quant_chart(filename):
+    """生成されたチャート画像を返す"""
+    from flask import send_from_directory
+    report_dir = os.path.join(os.path.dirname(__file__), '..', 'quant_research', 'data', 'reports')
+    return send_from_directory(report_dir, filename)
+
+
 if __name__ == '__main__':
     if ANTHROPIC_API_KEY:
         print("✅ Claude API Key: 設定済み")
     else:
         print("⚠️  Claude API Key: 未設定（環境変数 ANTHROPIC_API_KEY を設定してください）")
 
+    jquants_key = os.getenv('JQUANTS_API_KEY', '')
+    if jquants_key:
+        print("✅ J-Quants API Key: 設定済み")
+    else:
+        print("⚠️  J-Quants API Key: 未設定")
+
     print("=" * 60)
     print("🚀 PTSランキング ダッシュボード 起動中...")
     print("=" * 60)
     print("\n📊 Dashboard URL: http://localhost:5001")
+    print("🧪 クオンツ分析: http://localhost:5001/quant")
     print("💡 Press Ctrl+C to stop\n")
 
     app.run(debug=True, host='0.0.0.0', port=5001)

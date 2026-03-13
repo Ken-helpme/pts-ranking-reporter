@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>クオンツ分析 | PTSランキング</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/quant.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+
+    <header class="nav-header">
+        <div class="nav-container">
+            <h1 class="nav-title">📊 PTSランキング</h1>
+            <nav class="nav-links">
+                <a href="/" class="nav-link">📊 PTSランキング</a>
+                <a href="/trending" class="nav-link">🔥 話題株</a>
+                <a href="/screening" class="nav-link">🔍 スクリーニング</a>
+                <a href="/quant" class="nav-link active">🧪 クオンツ分析</a>
+            </nav>
+        </div>
+    </header>
+
+    <div class="quant-page">
+
+        <!-- ヒーロー -->
+        <div class="quant-hero">
+            <div class="hero-content">
+                <h2>機関投資家 資金流入シグナル研究</h2>
+                <p>出来高急増 = 機関投資家の資金流入？ データドリブンで最適な売買条件を発見</p>
+            </div>
+        </div>
+
+        <!-- ステップカード群 -->
+        <div class="quant-container">
+
+            <!-- 全体実行ボタン -->
+            <div class="run-all-bar">
+                <div class="run-all-left">
+                    <label class="mode-label">
+                        <input type="checkbox" id="fastMode" checked>
+                        高速モード（試行回数削減）
+                    </label>
+                </div>
+                <button class="btn-run-all" id="btnRunAll" onclick="runFullPipeline()">
+                    全STEP一括実行
+                </button>
+            </div>
+
+            <!-- 進捗バー -->
+            <div class="progress-section" id="progressSection" style="display:none;">
+                <div class="progress-bar-track">
+                    <div class="progress-bar-fill" id="progressFill" style="width:0%"></div>
+                </div>
+                <div class="progress-label" id="progressLabel">準備中...</div>
+            </div>
+
+            <!-- STEP cards -->
+            <div class="steps-grid">
+
+                <!-- STEP 1 -->
+                <div class="step-card" id="card-data">
+                    <div class="step-header">
+                        <span class="step-number">1</span>
+                        <h3>データ取得</h3>
+                        <span class="step-status" id="status-data"></span>
+                    </div>
+                    <p class="step-desc">J-Quants APIから全銘柄の日足データ（10年分）、指数データ、投資部門別データを取得</p>
+                    <button class="btn-step" onclick="runStep('data')">実行</button>
+                </div>
+
+                <!-- STEP 2 -->
+                <div class="step-card" id="card-features">
+                    <div class="step-header">
+                        <span class="step-number">2</span>
+                        <h3>特徴量計算</h3>
+                        <span class="step-status" id="status-features"></span>
+                    </div>
+                    <p class="step-desc">出来高シグナル、移動平均、RSI、MACD、ATR、ブレイクアウト検出、フォワードリターン</p>
+                    <button class="btn-step" onclick="runStep('features')">実行</button>
+                </div>
+
+                <!-- STEP 3-4 -->
+                <div class="step-card" id="card-backtest">
+                    <div class="step-header">
+                        <span class="step-number">3-4</span>
+                        <h3>バックテスト</h3>
+                        <span class="step-status" id="status-backtest"></span>
+                    </div>
+                    <p class="step-desc">数万パターンの売買条件を生成し、翌日寄り買い→N日後売りでバックテスト実行</p>
+                    <button class="btn-step" onclick="runStep('backtest')">実行</button>
+                </div>
+
+                <!-- STEP 5 -->
+                <div class="step-card" id="card-optimize">
+                    <div class="step-header">
+                        <span class="step-number">5</span>
+                        <h3>最適化</h3>
+                        <span class="step-status" id="status-optimize"></span>
+                    </div>
+                    <p class="step-desc">ランダムサーチ → ベイズ最適化（Optuna） → 遺伝的アルゴリズム（DEAP）</p>
+                    <button class="btn-step" onclick="runStep('optimize')">実行</button>
+                </div>
+
+                <!-- STEP 6 -->
+                <div class="step-card" id="card-ml">
+                    <div class="step-header">
+                        <span class="step-number">6</span>
+                        <h3>機械学習</h3>
+                        <span class="step-status" id="status-ml"></span>
+                    </div>
+                    <p class="step-desc">LightGBM / XGBoost / RandomForest で5日後+3%超のリターンを予測</p>
+                    <button class="btn-step" onclick="runStep('ml')">実行</button>
+                </div>
+
+                <!-- STEP 7 -->
+                <div class="step-card" id="card-regime">
+                    <div class="step-header">
+                        <span class="step-number">7</span>
+                        <h3>レジーム分析</h3>
+                        <span class="step-status" id="status-regime"></span>
+                    </div>
+                    <p class="step-desc">上昇/下落/横ばい相場ごとに戦略パフォーマンスを比較</p>
+                    <button class="btn-step" onclick="runStep('regime')">実行</button>
+                </div>
+
+                <!-- STEP 8 -->
+                <div class="step-card" id="card-report">
+                    <div class="step-header">
+                        <span class="step-number">8</span>
+                        <h3>レポート生成</h3>
+                        <span class="step-status" id="status-report"></span>
+                    </div>
+                    <p class="step-desc">最適条件、シグナル銘柄、売買ルール、改善提案を生成</p>
+                    <button class="btn-step" onclick="runStep('report')">実行</button>
+                </div>
+            </div>
+
+            <!-- ログ -->
+            <div class="log-section">
+                <div class="log-header">
+                    <h3>実行ログ</h3>
+                    <button class="btn-clear-log" onclick="clearLog()">クリア</button>
+                </div>
+                <div class="log-output" id="logOutput">
+                    <div class="log-line log-info">ボタンを押して分析を開始してください</div>
+                </div>
+            </div>
+
+            <!-- 結果セクション -->
+            <div class="results-section" id="resultsSection" style="display:none;">
+                <h2 class="results-title">分析結果</h2>
+
+                <!-- 最適条件カード群 -->
+                <div class="result-cards" id="resultCards"></div>
+
+                <!-- シグナル銘柄テーブル -->
+                <div class="signals-section" id="signalsSection" style="display:none;">
+                    <h3>現在シグナルに当てはまる銘柄</h3>
+                    <table class="signals-table">
+                        <thead>
+                            <tr>
+                                <th>コード</th>
+                                <th>銘柄名</th>
+                                <th>終値</th>
+                                <th>出来高倍率</th>
+                                <th>Zスコア</th>
+                                <th>売買代金</th>
+                                <th>セクター</th>
+                                <th>シグナル</th>
+                            </tr>
+                        </thead>
+                        <tbody id="signalsBody"></tbody>
+                    </table>
+                </div>
+
+                <!-- 売買ルール -->
+                <div class="rules-section" id="rulesSection" style="display:none;"></div>
+
+                <!-- 改善提案 -->
+                <div class="suggestions-section" id="suggestionsSection" style="display:none;"></div>
+
+                <!-- 画像 -->
+                <div class="charts-section" id="chartsSection" style="display:none;">
+                    <h3>可視化</h3>
+                    <div class="charts-grid" id="chartsGrid"></div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script src="/static/js/quant.js"></script>
+</body>
+
+</html>
