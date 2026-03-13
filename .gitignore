@@ -42,6 +42,9 @@ ENV/
 *.jpg
 *.jpeg
 
+# Quant Research data cache
+quant_research/data/
+
 # Logs
 *.log
 
