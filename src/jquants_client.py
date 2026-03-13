@@ -1402,10 +1402,19 @@ class JQuantsClient:
                 'sample_size':   n20 or n10 or n5,  # 統計的信頼性の目安
             })
 
-        # 勝率×2 + 平均リターンでスコアリング（サンプル数3未満は除外）
-        combo_results = [c for c in combo_results if (c['sample_size'] or 0) >= 3]
+        # ── ハードフィルター: 発動頻度と最低銘柄数 ──
+        # 「100%勝率・3日・1銘柄」を排除。統計的に意味ある条件のみ残す
+        total_dates    = len(stock_universe)
+        min_date_count = max(5, int(total_dates * 0.4))   # 40%以上の日付で発動
+        min_avg_picks  = 3.0                               # 平均3銘柄以上
+        combo_results = [
+            c for c in combo_results
+            if c['date_count'] >= min_date_count
+            and (c['avg_picks'] or 0) >= min_avg_picks
+        ]
+        # avg_returnは上限15%でキャップ（少銘柄の外れ値バイアス対策）
         combo_results.sort(
-            key=lambda x: ((x['win_rate_20d'] or 0) * 2 + (x['avg_return_20d'] or 0)),
+            key=lambda x: ((x['win_rate_20d'] or 0) * 2 + min((x['avg_return_20d'] or 0), 15)),
             reverse=True
         )
         best_20d = combo_results[0] if combo_results else None
