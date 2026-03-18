@@ -5,12 +5,44 @@ Reads from _vol_base_features.pkl + _intermediate_raw_data.pkl and produces
 a structured dict suitable for the Flask /api/signals/* endpoints.
 """
 import os
+import logging
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from typing import Dict, List, Optional
 
+logger = logging.getLogger(__name__)
+
 DATA_DIR = Path(__file__).parent / "data"
+
+GCS_BUCKET = "pts-ranking-data"
+GCS_PREFIX = "quant_data"
+_DATA_FILES = ["_vol_base_features.pkl", "_intermediate_raw_data.pkl"]
+
+
+def _ensure_data_from_gcs(data_dir: Path) -> bool:
+    """Download data files from GCS if they don't exist locally. Returns True if available."""
+    missing = [f for f in _DATA_FILES if not (data_dir / f).exists()]
+    if not missing:
+        return True
+    try:
+        from google.cloud import storage
+        client = storage.Client()
+        bucket = client.bucket(GCS_BUCKET)
+        data_dir.mkdir(parents=True, exist_ok=True)
+        for fname in missing:
+            blob = bucket.blob(f"{GCS_PREFIX}/{fname}")
+            dest = data_dir / fname
+            logger.info("Downloading gs://%s/%s/%s -> %s", GCS_BUCKET, GCS_PREFIX, fname, dest)
+            blob.download_to_filename(str(dest))
+            logger.info("Downloaded %s (%.1f MB)", fname, dest.stat().st_size / 1e6)
+        return True
+    except ImportError:
+        logger.warning("google-cloud-storage not installed, skipping GCS download")
+        return False
+    except Exception as e:
+        logger.warning("GCS download failed: %s", e)
+        return False
 
 # ---------------------------------------------------------------------------
 # Earnings-growth helper
@@ -151,6 +183,9 @@ def get_signal_stocks(data_dir: Optional[str] = None) -> dict:
     ddir = Path(data_dir) if data_dir else DATA_DIR
     feat_path = ddir / '_vol_base_features.pkl'
     raw_path = ddir / '_intermediate_raw_data.pkl'
+
+    if not feat_path.exists() or not raw_path.exists():
+        _ensure_data_from_gcs(ddir)
 
     if not feat_path.exists() or not raw_path.exists():
         return {'error': 'Data files not found. Run the quant pipeline first.'}
