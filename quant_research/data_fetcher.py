@@ -80,6 +80,45 @@ def fetch_master(force: bool = False) -> pd.DataFrame:
 # 日足株価 (全銘柄 x 10年)
 # ============================================================
 
+def _fetch_prices_rate_limited(cli, start_dt: datetime, end_dt: datetime) -> pd.DataFrame:
+    """Rate-limited day-by-day price fetcher (respects 120 req/min limit)."""
+    import time
+
+    dates = pd.bdate_range(start=start_dt.date(), end=end_dt.date())
+    total = len(dates)
+    frames = []
+
+    for i, dt in enumerate(dates):
+        date_str = dt.strftime("%Y%m%d")
+        retries = 0
+        while retries < 5:
+            try:
+                df_day = cli.get_eq_bars_daily(date_yyyymmdd=date_str)
+                if df_day is not None and not df_day.empty:
+                    frames.append(df_day)
+                break
+            except Exception as e:
+                err_str = str(e).lower()
+                if "429" in err_str or "too many" in err_str:
+                    retries += 1
+                    wait = 30 * retries
+                    logger.warning(f"  429 on {date_str}, waiting {wait}s (retry {retries}/5)")
+                    time.sleep(wait)
+                else:
+                    raise
+
+        if (i + 1) % 50 == 0 or (i + 1) == total:
+            logger.info(f"  Progress: {i + 1}/{total} days fetched")
+        time.sleep(0.55)
+
+    if not frames:
+        return pd.DataFrame()
+
+    result = pd.concat(frames, ignore_index=True)
+    logger.info(f"  Rate-limited fetch complete: {result.shape[0]:,} rows, {len(frames)} days")
+    return result
+
+
 def fetch_stock_prices(force: bool = False, years: int = DATA_YEARS) -> pd.DataFrame:
     """
     全銘柄の日足OHLCVを取得。
@@ -102,7 +141,7 @@ def fetch_stock_prices(force: bool = False, years: int = DATA_YEARS) -> pd.DataF
         logger.info(f"Full fetch from {start_dt.date()} to {end_dt.date()} ({years} years)")
 
     cli = _get_client()
-    df_new = cli.get_eq_bars_daily_range(start_dt=start_dt, end_dt=end_dt)
+    df_new = _fetch_prices_rate_limited(cli, start_dt, end_dt)
 
     if df_new is None or df_new.empty:
         logger.warning("No new price data fetched")
@@ -133,8 +172,10 @@ def fetch_index_topix(force: bool = False, years: int = DATA_YEARS) -> pd.DataFr
     cli = _get_client()
     end_dt = datetime.now(tz=JST)
     start_dt = datetime(end_dt.year - years, end_dt.month, end_dt.day, tzinfo=JST)
-    logger.info(f"Fetching TOPIX data ({start_dt.date()} to {end_dt.date()})...")
-    df = cli.get_idx_bars_daily_topix_range(start_dt=start_dt, end_dt=end_dt)
+    from_str = start_dt.strftime("%Y%m%d")
+    to_str = end_dt.strftime("%Y%m%d")
+    logger.info(f"Fetching TOPIX data ({from_str} to {to_str})...")
+    df = cli.get_idx_bars_daily_topix(from_yyyymmdd=from_str, to_yyyymmdd=to_str)
 
     if df is None or df.empty:
         logger.warning("No TOPIX data fetched")
@@ -145,32 +186,17 @@ def fetch_index_topix(force: bool = False, years: int = DATA_YEARS) -> pd.DataFr
 
 
 def fetch_index_nikkei(force: bool = False, years: int = DATA_YEARS) -> pd.DataFrame:
-    """日経225日足データを取得（Indices endpointから）"""
+    """日経225の代替としてTOPIXデータを使用（J-QuantsはNikkei225非提供）"""
     if not force:
         cached = _load_cache("index_nikkei")
         if cached is not None:
             return cached
 
-    cli = _get_client()
-    end_dt = datetime.now(tz=JST)
-    start_dt = datetime(end_dt.year - years, end_dt.month, end_dt.day, tzinfo=JST)
-    logger.info(f"Fetching Nikkei 225 data ({start_dt.date()} to {end_dt.date()})...")
-
-    try:
-        df = cli.get_idx_bars_daily_range(start_dt=start_dt, end_dt=end_dt)
-    except Exception as e:
-        logger.warning(f"Indices endpoint failed: {e}, trying TOPIX as fallback")
-        return fetch_index_topix(force=force, years=years)
-
+    logger.info("Nikkei 225 not available in J-Quants, using TOPIX as market proxy")
+    df = fetch_index_topix(force=force, years=years)
     if df is not None and not df.empty:
-        nikkei = df[df["Code"].astype(str).str.contains("0000")].copy()
-        if nikkei.empty:
-            nikkei = df.copy()
-        _save_cache("index_nikkei", nikkei)
-        return nikkei
-
-    logger.warning("No Nikkei data fetched")
-    return pd.DataFrame()
+        _save_cache("index_nikkei", df)
+    return df
 
 
 # ============================================================
@@ -187,10 +213,12 @@ def fetch_investor_types(force: bool = False, years: int = DATA_YEARS) -> pd.Dat
     cli = _get_client()
     end_dt = datetime.now(tz=JST)
     start_dt = datetime(end_dt.year - years, end_dt.month, end_dt.day, tzinfo=JST)
-    logger.info(f"Fetching investor type data ({start_dt.date()} to {end_dt.date()})...")
+    from_str = start_dt.strftime("%Y%m%d")
+    to_str = end_dt.strftime("%Y%m%d")
+    logger.info(f"Fetching investor type data ({from_str} to {to_str})...")
 
     try:
-        df = cli.get_eq_investor_types_range(start_dt=start_dt, end_dt=end_dt)
+        df = cli.get_eq_investor_types(from_yyyymmdd=from_str, to_yyyymmdd=to_str)
     except Exception as e:
         logger.warning(f"Investor types fetch failed (requires Standard plan): {e}")
         return pd.DataFrame()
@@ -206,26 +234,73 @@ def fetch_investor_types(force: bool = False, years: int = DATA_YEARS) -> pd.Dat
 # 決算サマリー（時価総額算出用）
 # ============================================================
 
-def fetch_financial_summary(force: bool = False) -> pd.DataFrame:
-    """決算サマリーデータ（時価総額・PER・PBR等）"""
+def _fetch_fins_summary_rate_limited(cli, start_dt: datetime, end_dt: datetime) -> pd.DataFrame:
+    """Rate-limited day-by-day financial summary fetcher."""
+    import time
+
+    dates = pd.bdate_range(start=start_dt.date(), end=end_dt.date())
+    total = len(dates)
+    frames = []
+
+    for i, dt in enumerate(dates):
+        date_str = dt.strftime("%Y%m%d")
+        retries = 0
+        while retries < 5:
+            try:
+                df_day = cli.get_fin_summary(date_yyyymmdd=date_str)
+                if df_day is not None and not df_day.empty:
+                    frames.append(df_day)
+                break
+            except Exception as e:
+                err_str = str(e).lower()
+                if "429" in err_str or "too many" in err_str:
+                    retries += 1
+                    wait = 30 * retries
+                    logger.warning(f"  429 on fins {date_str}, waiting {wait}s (retry {retries}/5)")
+                    time.sleep(wait)
+                elif "400" in err_str:
+                    break
+                else:
+                    logger.warning(f"  fins fetch error on {date_str}: {e}")
+                    break
+
+        if (i + 1) % 50 == 0 or (i + 1) == total:
+            logger.info(f"  Financial summary progress: {i + 1}/{total} days fetched, {len(frames)} with data")
+        time.sleep(0.55)
+
+    if not frames:
+        return pd.DataFrame()
+
+    result = pd.concat(frames, ignore_index=True)
+    result = result.drop_duplicates()
+    logger.info(f"  Financial summary fetch complete: {result.shape[0]:,} rows")
+    return result
+
+
+def fetch_financial_summary(force: bool = False, years: int = DATA_YEARS) -> pd.DataFrame:
+    """決算サマリーデータ（時価総額・PER・PBR・成長率等）"""
     if not force:
         cached = _load_cache("fins_summary")
         if cached is not None:
             return cached
 
     cli = _get_client()
-    logger.info("Fetching financial summary data...")
+    end_dt = datetime.now(tz=JST)
+    start_dt = datetime(end_dt.year - max(years, 2), end_dt.month, end_dt.day, tzinfo=JST)
+    logger.info(f"Fetching financial summary data ({start_dt.date()} to {end_dt.date()})...")
 
     try:
-        df = cli.get_fin_summary()
+        df = _fetch_fins_summary_rate_limited(cli, start_dt, end_dt)
     except Exception as e:
-        logger.warning(f"Financial summary fetch failed: {e}")
+        logger.warning(f"Financial summary range fetch failed: {e}")
         return pd.DataFrame()
 
     if df is not None and not df.empty:
         _save_cache("fins_summary", df)
+        logger.info(f"  Financial summary: {len(df):,} rows, {df['Code'].nunique() if 'Code' in df.columns else '?'} stocks")
         return df
 
+    logger.info("Financial summary returned empty, skipping")
     return pd.DataFrame()
 
 
@@ -243,24 +318,39 @@ def fetch_all(force: bool = False, years: int = DATA_YEARS) -> dict:
     logger.info("=" * 60)
 
     data = {}
-
     data["master"] = fetch_master(force=force)
     logger.info(f"  Master: {len(data['master']):,} stocks")
 
     data["prices"] = fetch_stock_prices(force=force, years=years)
     logger.info(f"  Prices: {len(data['prices']):,} rows")
 
-    data["topix"] = fetch_index_topix(force=force, years=years)
-    logger.info(f"  TOPIX: {len(data['topix']):,} rows")
+    try:
+        data["topix"] = fetch_index_topix(force=force, years=years)
+        logger.info(f"  TOPIX: {len(data['topix']):,} rows")
+    except Exception as e:
+        logger.warning(f"  TOPIX fetch failed: {e}")
+        data["topix"] = pd.DataFrame()
 
-    data["nikkei"] = fetch_index_nikkei(force=force, years=years)
-    logger.info(f"  Nikkei: {len(data['nikkei']):,} rows")
+    try:
+        data["nikkei"] = fetch_index_nikkei(force=force, years=years)
+        logger.info(f"  Nikkei: {len(data['nikkei']):,} rows")
+    except Exception as e:
+        logger.warning(f"  Nikkei fetch failed: {e}")
+        data["nikkei"] = pd.DataFrame()
 
-    data["investor_types"] = fetch_investor_types(force=force, years=years)
-    logger.info(f"  Investor types: {len(data['investor_types']):,} rows")
+    try:
+        data["investor_types"] = fetch_investor_types(force=force, years=years)
+        logger.info(f"  Investor types: {len(data['investor_types']):,} rows")
+    except Exception as e:
+        logger.warning(f"  Investor types fetch failed: {e}")
+        data["investor_types"] = pd.DataFrame()
 
-    data["fins_summary"] = fetch_financial_summary(force=force)
-    logger.info(f"  Financial summary: {len(data['fins_summary']):,} rows")
+    try:
+        data["fins_summary"] = fetch_financial_summary(force=force, years=years)
+        logger.info(f"  Financial summary: {len(data['fins_summary']):,} rows")
+    except Exception as e:
+        logger.warning(f"  Financial summary fetch failed: {e}")
+        data["fins_summary"] = pd.DataFrame()
 
     logger.info("=" * 60)
     logger.info("Data acquisition complete")
@@ -282,11 +372,25 @@ def prepare_price_dataframe(prices: pd.DataFrame, master: pd.DataFrame) -> pd.Da
 
     col_map = {}
     for src, dst in [
-        ("AdjOpen", "Open"), ("AdjHigh", "High"), ("AdjLow", "Low"),
-        ("AdjClose", "Close"), ("AdjVolume", "Volume"),
+        ("AdjO", "Open"), ("AdjH", "High"), ("AdjL", "Low"),
+        ("AdjC", "Close"), ("AdjVo", "Volume"),
     ]:
         if src in df.columns:
             col_map[src] = dst
+    if not col_map:
+        for src, dst in [
+            ("AdjOpen", "Open"), ("AdjHigh", "High"), ("AdjLow", "Low"),
+            ("AdjClose", "Close"), ("AdjVolume", "Volume"),
+        ]:
+            if src in df.columns:
+                col_map[src] = dst
+    if not col_map:
+        for src, dst in [
+            ("O", "Open"), ("H", "High"), ("L", "Low"),
+            ("C", "Close"), ("Vo", "Volume"),
+        ]:
+            if src in df.columns:
+                col_map[src] = dst
     if not col_map:
         for src, dst in [
             ("Open", "Open"), ("High", "High"), ("Low", "Low"),

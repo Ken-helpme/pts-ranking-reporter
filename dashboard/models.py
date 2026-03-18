@@ -126,8 +126,124 @@ def init_db():
         )
     ''')
 
+    # Signal history table (stealth accumulation monitoring)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS signal_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            stock_code TEXT NOT NULL,
+            stock_name TEXT,
+            sector TEXT,
+            signal_date TEXT NOT NULL,
+            close_price REAL,
+            vol_base_ratio REAL,
+            vol_above_count INTEGER,
+            turnover_avg REAL,
+            rsi REAL,
+            ma25_dev REAL,
+            op_growth REAL,
+            eps_growth REAL,
+            first_detected TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(stock_code, signal_date)
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_signal_code ON signal_history(stock_code)
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_signal_date ON signal_history(signal_date)
+    ''')
+
     conn.commit()
     conn.close()
+
+
+def save_signal_history(records: List[Dict]) -> int:
+    """Bulk-insert signal records (ignore duplicates). Returns rows inserted."""
+    if not records:
+        return 0
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    inserted = 0
+    for r in records:
+        try:
+            cursor.execute('''
+                INSERT OR IGNORE INTO signal_history
+                (stock_code, stock_name, sector, signal_date, close_price,
+                 vol_base_ratio, vol_above_count, turnover_avg, rsi, ma25_dev,
+                 op_growth, eps_growth, first_detected)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                r.get('code_full', r.get('code', '')),
+                r.get('name', ''),
+                r.get('sector', ''),
+                r.get('signal_date', ''),
+                r.get('close'),
+                r.get('vol_base_ratio'),
+                r.get('vol_above_count'),
+                r.get('turnover_avg'),
+                r.get('rsi'),
+                r.get('ma25_dev'),
+                r.get('op_growth'),
+                r.get('eps_growth'),
+                r.get('first_detected', ''),
+            ))
+            inserted += cursor.rowcount
+        except Exception:
+            pass
+    conn.commit()
+    conn.close()
+    return inserted
+
+
+def get_signal_history(days: int = 30) -> List[Dict]:
+    """Return recent signal history rows."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT stock_code, stock_name, sector, signal_date, close_price,
+               vol_base_ratio, vol_above_count, turnover_avg, rsi, ma25_dev,
+               op_growth, eps_growth, first_detected, created_at
+        FROM signal_history
+        WHERE signal_date >= date('now', ?)
+        ORDER BY signal_date DESC, vol_base_ratio DESC
+    ''', (f'-{days} days',))
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            'code': row[0], 'name': row[1], 'sector': row[2],
+            'signal_date': row[3], 'close': row[4],
+            'vol_base_ratio': row[5], 'vol_above_count': row[6],
+            'turnover_avg': row[7], 'rsi': row[8], 'ma25_dev': row[9],
+            'op_growth': row[10], 'eps_growth': row[11],
+            'first_detected': row[12], 'created_at': row[13],
+        }
+        for row in rows
+    ]
+
+
+def get_disappeared_signals(current_codes: List[str], lookback_days: int = 5) -> List[Dict]:
+    """Find stock codes present in recent history but absent from current_codes."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT DISTINCT stock_code, stock_name, sector,
+               MAX(signal_date) as last_date, close_price
+        FROM signal_history
+        WHERE signal_date >= date('now', ?)
+        GROUP BY stock_code
+        ORDER BY last_date DESC
+    ''', (f'-{lookback_days} days',))
+    rows = cursor.fetchall()
+    conn.close()
+    current_set = set(current_codes)
+    return [
+        {'code': r[0], 'name': r[1], 'sector': r[2],
+         'last_signal_date': r[3], 'signal_price': r[4]}
+        for r in rows if r[0] not in current_set
+    ]
 
 
 def save_auto_optimization_log(improved: bool, prev_score: float, new_score: float,

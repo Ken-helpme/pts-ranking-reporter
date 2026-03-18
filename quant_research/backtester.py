@@ -31,6 +31,9 @@ class BacktestResult:
     profit_factor: float              # プロフィットファクター
     total_return: float               # 累積リターン
     avg_trades_per_day: float         # 日当たり平均トレード数
+    avg_daily_hits: float = 0.0       # 日平均ヒット数
+    avg_monthly_hits: float = 0.0     # 月平均ヒット数
+    avg_yearly_hits: float = 0.0      # 年平均ヒット数
     trade_returns: np.ndarray = field(repr=False, default=None)
     trade_dates: np.ndarray = field(repr=False, default=None)
 
@@ -57,6 +60,9 @@ class BacktestResult:
             "profit_factor": round(self.profit_factor, 4),
             "total_return": round(self.total_return, 4),
             "composite_score": round(self.composite_score, 4),
+            "avg_daily_hits": round(self.avg_daily_hits, 2),
+            "avg_monthly_hits": round(self.avg_monthly_hits, 2),
+            "avg_yearly_hits": round(self.avg_yearly_hits, 2),
         }
 
 
@@ -118,6 +124,21 @@ def run_backtest(df: pd.DataFrame, condition: Dict,
     unique_dates = pd.Series(dates).nunique() if dates is not None else 1
     avg_per_day = n_trades / max(unique_dates, 1)
 
+    avg_daily_hits = 0.0
+    avg_monthly_hits = 0.0
+    avg_yearly_hits = 0.0
+    if dates is not None and len(dates) > 0:
+        date_series = pd.to_datetime(pd.Series(dates), errors="coerce").dropna()
+        if not date_series.empty:
+            daily_counts = date_series.groupby(date_series.dt.date).count()
+            avg_daily_hits = float(daily_counts.mean())
+
+            monthly_counts = date_series.groupby(date_series.dt.to_period("M")).count()
+            avg_monthly_hits = float(monthly_counts.mean()) if len(monthly_counts) > 0 else 0.0
+
+            yearly_counts = date_series.groupby(date_series.dt.year).count()
+            avg_yearly_hits = float(yearly_counts.mean()) if len(yearly_counts) > 0 else 0.0
+
     return BacktestResult(
         condition=condition,
         holding_days=holding,
@@ -130,6 +151,9 @@ def run_backtest(df: pd.DataFrame, condition: Dict,
         profit_factor=profit_factor,
         total_return=total_return,
         avg_trades_per_day=avg_per_day,
+        avg_daily_hits=avg_daily_hits,
+        avg_monthly_hits=avg_monthly_hits,
+        avg_yearly_hits=avg_yearly_hits,
         trade_returns=returns,
         trade_dates=dates,
     )

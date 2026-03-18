@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>シグナル監視 | PTSランキング</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/signals.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
+</head>
+
+<body>
+
+    <!-- ナビゲーション -->
+    <header class="nav-header">
+        <div class="nav-container">
+            <h1 class="nav-title">📊 PTSランキング</h1>
+            <nav class="nav-links">
+                <a href="/" class="nav-link">📊 PTSランキング</a>
+                <a href="/trending" class="nav-link">🔥 話題株</a>
+                <a href="/screening" class="nav-link">🔍 スクリーニング</a>
+                <a href="/signals" class="nav-link active">📡 シグナル監視</a>
+                <a href="/quant" class="nav-link">🧪 クオンツ分析</a>
+            </nav>
+        </div>
+    </header>
+
+    <!-- メインコンテンツ -->
+    <main class="signals-main">
+
+        <!-- ヘッダーバー -->
+        <div class="signals-header">
+            <div class="signals-header-left">
+                <h2>ステルス仕込みシグナル監視</h2>
+                <span id="signalDate" class="signal-date"></span>
+            </div>
+            <button id="refreshBtn" class="btn-refresh" onclick="refreshSignals()">
+                <span class="refresh-icon">↻</span> 更新
+            </button>
+        </div>
+
+        <!-- サマリーカード -->
+        <div class="summary-grid">
+            <div class="summary-card">
+                <div class="summary-label">検出中</div>
+                <div class="summary-value" id="totalCount">-</div>
+                <div class="summary-sub">銘柄</div>
+            </div>
+            <div class="summary-card summary-new">
+                <div class="summary-label">新規 (5日)</div>
+                <div class="summary-value" id="newCount">-</div>
+                <div class="summary-sub">銘柄</div>
+            </div>
+            <div class="summary-card summary-disappeared">
+                <div class="summary-label">消失</div>
+                <div class="summary-value" id="disappearedCount">-</div>
+                <div class="summary-sub">銘柄</div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-label">平均VB倍率</div>
+                <div class="summary-value" id="avgVB">-</div>
+                <div class="summary-sub">x</div>
+            </div>
+        </div>
+
+        <!-- 消失アラート -->
+        <div id="disappearedAlert" class="disappeared-alert" style="display:none;">
+            <div class="alert-header">
+                <span class="alert-icon">⚠</span>
+                <span>シグナル消失銘柄</span>
+                <button class="alert-toggle" onclick="toggleDisappeared()">▼</button>
+            </div>
+            <div id="disappearedBody" class="alert-body"></div>
+        </div>
+
+        <!-- ローディング -->
+        <div id="loading" class="loading-container">
+            <div class="loading-spinner"></div>
+            <p>シグナルデータを読み込み中...</p>
+        </div>
+
+        <!-- エラー表示 -->
+        <div id="errorBox" class="error-box" style="display:none;">
+            <p id="errorMsg"></p>
+        </div>
+
+        <!-- タブ -->
+        <div id="tabSection" class="tab-section" style="display:none;">
+            <div class="tab-bar">
+                <button class="tab-btn active" data-tab="all" onclick="switchTab('all')">
+                    すべて <span id="tabAllCount" class="tab-count"></span>
+                </button>
+                <button class="tab-btn" data-tab="new_5d" onclick="switchTab('new_5d')">
+                    新規 (5日) <span id="tabNewCount" class="tab-count"></span>
+                </button>
+                <button class="tab-btn" data-tab="recent_10d" onclick="switchTab('recent_10d')">
+                    最近 (10日) <span id="tabRecentCount" class="tab-count"></span>
+                </button>
+                <button class="tab-btn" data-tab="continuing" onclick="switchTab('continuing')">
+                    継続中 <span id="tabContCount" class="tab-count"></span>
+                </button>
+            </div>
+
+            <!-- テーブル -->
+            <div class="signal-table-wrap">
+                <table class="signal-table">
+                    <thead>
+                        <tr>
+                            <th class="sortable" data-sort="first_detected">初検知</th>
+                            <th>コード</th>
+                            <th>銘柄名</th>
+                            <th>業種</th>
+                            <th class="num sortable" data-sort="close">株価</th>
+                            <th class="num sortable" data-sort="vol_base_ratio">VB倍率</th>
+                            <th class="num sortable" data-sort="vol_above_count">継続日</th>
+                            <th class="num">売代(億)</th>
+                            <th class="num sortable" data-sort="rsi">RSI</th>
+                            <th class="num">25MA乖離</th>
+                            <th class="num sortable" data-sort="op_growth">営業増益</th>
+                            <th class="num">EPS増益</th>
+                            <th>トレンド</th>
+                            <th>検知日</th>
+                            <th class="chart-col">チャート (120日)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="signalBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- トースト -->
+    <div id="toast" class="toast"></div>
+
+    <script src="/static/js/signals.js"></script>
+</body>
+
+</html>

@@ -12,6 +12,7 @@ from .config import (
     VOLUME_LOOKBACK, MA_PERIODS, RSI_PERIOD,
     MACD_FAST, MACD_SLOW, MACD_SIGNAL,
     ATR_PERIOD, VOLATILITY_PERIOD, BREAKOUT_PERIODS,
+    FORWARD_PERIODS,
 )
 
 logger = logging.getLogger(__name__)
@@ -132,11 +133,10 @@ def add_macd(df: pd.DataFrame,
 
 def add_volatility(df: pd.DataFrame, period: int = VOLATILITY_PERIOD) -> pd.DataFrame:
     """日次リターンの標準偏差（ヒストリカルボラティリティ）"""
-    returns = df.groupby("Code")["Close"].transform(lambda x: x.pct_change())
-    df["volatility"] = df.groupby("Code")[returns.name].transform(
+    df["daily_return"] = df.groupby("Code")["Close"].transform(lambda x: x.pct_change())
+    df["volatility"] = df.groupby("Code")["daily_return"].transform(
         lambda x: x.rolling(period, min_periods=max(5, period // 2)).std()
     )
-    df["daily_return"] = returns
     return df
 
 
@@ -195,7 +195,7 @@ def add_forward_returns(df: pd.DataFrame, periods: list = None) -> pd.DataFrame:
     翌日寄り買い → N日後終値売りのリターン。
     """
     if periods is None:
-        periods = [3, 5, 10]
+        periods = FORWARD_PERIODS
 
     g = df.groupby("Code")
     next_open = g["Open"].shift(-1)

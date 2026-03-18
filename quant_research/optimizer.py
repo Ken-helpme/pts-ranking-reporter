@@ -16,6 +16,7 @@ import pandas as pd
 from .config import (
     RANDOM_SEARCH_TRIALS, BAYESIAN_TRIALS,
     GA_POPULATION, GA_GENERATIONS, MIN_TRADES,
+    FUNDAMENTAL_PARAMS, PARAM_SPACE,
 )
 from .screener import generate_random_conditions, apply_condition
 from .backtester import run_backtest, BacktestResult
@@ -93,7 +94,7 @@ def bayesian_optimization(df: pd.DataFrame,
                 "price_position",
                 ["none", "near_52w_high", "breakout_50d", "breakout_200d"]
             ),
-            "holding_days": trial.suggest_categorical("holding_days", [3, 5, 10]),
+            "holding_days": trial.suggest_categorical("holding_days", PARAM_SPACE["holding_days"]),
             "rsi_min": trial.suggest_int("rsi_min", 0, 60, step=10),
             "rsi_max": trial.suggest_int("rsi_max", 50, 100, step=10),
             "momentum_min": trial.suggest_float("momentum_min", -0.05, 0.15, step=0.01),
@@ -102,6 +103,11 @@ def bayesian_optimization(df: pd.DataFrame,
             ),
             "volatility_max": trial.suggest_float("volatility_max", 0.01, 0.08, step=0.005),
         }
+
+        for fkey, (flo, fhi) in FUNDAMENTAL_PARAMS.items():
+            use_fund = trial.suggest_categorical(f"use_{fkey}", [True, False])
+            if use_fund:
+                cond[fkey] = trial.suggest_float(fkey, flo, fhi)
 
         cond["turnover_min"] = 10 ** cond["turnover_min"]
         cond["market_cap_min"] = 10 ** cond["market_cap_min"]
@@ -152,7 +158,7 @@ def bayesian_optimization(df: pd.DataFrame,
 def _condition_to_optuna_params(cond: Dict) -> Optional[Dict]:
     """条件辞書をOptuna enqueue用パラメータに変換"""
     try:
-        return {
+        params = {
             "vol_ratio_min": round(cond["vol_ratio_min"] * 2) / 2,
             "vol_zscore_min": round(cond.get("vol_zscore_min", 1.0) * 2) / 2,
             "turnover_min": np.log10(cond["turnover_min"]),
@@ -167,6 +173,12 @@ def _condition_to_optuna_params(cond: Dict) -> Optional[Dict]:
             "macd_condition": cond.get("macd_condition", "none"),
             "volatility_max": round(cond.get("volatility_max", 0.04), 3),
         }
+        for fkey in FUNDAMENTAL_PARAMS:
+            has_fund = fkey in cond
+            params[f"use_{fkey}"] = has_fund
+            if has_fund:
+                params[fkey] = cond[fkey]
+        return params
     except (KeyError, TypeError):
         return None
 
@@ -197,7 +209,7 @@ def genetic_algorithm(df: pd.DataFrame,
         ("market_cap_max_log", np.log10(1e10), np.log10(5e12)),
         ("trend_idx", 0, 3),
         ("price_idx", 0, 3),
-        ("holding_idx", 0, 2),
+        ("holding_idx", 0, len(PARAM_SPACE["holding_days"]) - 1),
         ("rsi_min", 0, 60),
         ("rsi_max", 50, 100),
         ("momentum_min", -0.05, 0.15),
@@ -205,9 +217,14 @@ def genetic_algorithm(df: pd.DataFrame,
         ("volatility_max", 0.01, 0.08),
     ]
 
+    FUND_GENE_NAMES = list(FUNDAMENTAL_PARAMS.keys())
+    for fkey, (flo, fhi) in FUNDAMENTAL_PARAMS.items():
+        GENE_RANGES.append((f"use_{fkey}", 0, 1))
+        GENE_RANGES.append((fkey, flo, fhi))
+
     TREND_OPTIONS = ["none", "ma5_above_ma25", "ma25_above_ma75", "ma5_above_ma25_above_ma75"]
     PRICE_OPTIONS = ["none", "near_52w_high", "breakout_50d", "breakout_200d"]
-    HOLDING_OPTIONS = [3, 5, 10]
+    HOLDING_OPTIONS = PARAM_SPACE["holding_days"]
     MACD_OPTIONS = ["none", "positive", "cross_up"]
 
     if not hasattr(creator, "FitnessMax"):
@@ -235,7 +252,8 @@ def genetic_algorithm(df: pd.DataFrame,
         if rsi_lo >= rsi_hi:
             rsi_hi = min(rsi_lo + 20, 100)
 
-        return {
+        holding_max_idx = len(HOLDING_OPTIONS) - 1
+        cond = {
             "vol_ratio_min": round(np.clip(vals[0], 1.5, 10.0), 1),
             "vol_zscore_min": round(np.clip(vals[1], 0.0, 5.0), 1),
             "turnover_min": 10 ** np.clip(vals[2], np.log10(5e7), np.log10(5e9)),
@@ -243,13 +261,23 @@ def genetic_algorithm(df: pd.DataFrame,
             "market_cap_max": 10 ** np.clip(cap_max_log, np.log10(1e10), np.log10(5e12)),
             "trend_condition": TREND_OPTIONS[int(np.clip(round(vals[5]), 0, 3))],
             "price_position": PRICE_OPTIONS[int(np.clip(round(vals[6]), 0, 3))],
-            "holding_days": HOLDING_OPTIONS[int(np.clip(round(vals[7]), 0, 2))],
+            "holding_days": HOLDING_OPTIONS[int(np.clip(round(vals[7]), 0, holding_max_idx))],
             "rsi_min": rsi_lo,
             "rsi_max": rsi_hi,
             "momentum_min": round(np.clip(vals[10], -0.05, 0.15), 3),
             "macd_condition": MACD_OPTIONS[int(np.clip(round(vals[11]), 0, 2))],
             "volatility_max": round(np.clip(vals[12], 0.01, 0.08), 3),
         }
+
+        base_idx = 13
+        for fkey, (flo, fhi) in FUNDAMENTAL_PARAMS.items():
+            use_flag = vals[base_idx] if base_idx < len(vals) else 0
+            fval = vals[base_idx + 1] if base_idx + 1 < len(vals) else flo
+            if use_flag > 0.5:
+                cond[fkey] = round(float(np.clip(fval, flo, fhi)), 3)
+            base_idx += 2
+
+        return cond
 
     all_results = []
 
@@ -282,6 +310,8 @@ def genetic_algorithm(df: pd.DataFrame,
         for i, sr in enumerate(seed_results[:population_size // 4]):
             try:
                 cond = sr.condition
+                hd = cond.get("holding_days", 5)
+                hd_idx = HOLDING_OPTIONS.index(hd) if hd in HOLDING_OPTIONS else 0
                 genes = [
                     cond["vol_ratio_min"],
                     cond.get("vol_zscore_min", 1.0),
@@ -290,13 +320,17 @@ def genetic_algorithm(df: pd.DataFrame,
                     np.log10(cond["market_cap_max"]),
                     TREND_OPTIONS.index(cond.get("trend_condition", "none")),
                     PRICE_OPTIONS.index(cond.get("price_position", "none")),
-                    HOLDING_OPTIONS.index(cond.get("holding_days", 5)),
+                    hd_idx,
                     cond.get("rsi_min", 30),
                     cond.get("rsi_max", 80),
                     cond.get("momentum_min", 0.0),
                     MACD_OPTIONS.index(cond.get("macd_condition", "none")),
                     cond.get("volatility_max", 0.04),
                 ]
+                for fkey, (flo, fhi) in FUNDAMENTAL_PARAMS.items():
+                    has_fund = fkey in cond
+                    genes.append(1.0 if has_fund else 0.0)
+                    genes.append(cond.get(fkey, (flo + fhi) / 2))
                 pop[i] = creator.Individual(genes)
             except (ValueError, KeyError):
                 pass

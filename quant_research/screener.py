@@ -9,7 +9,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 
-from .config import PARAM_SPACE, RANDOM_SEARCH_TRIALS
+from .config import PARAM_SPACE, RANDOM_SEARCH_TRIALS, FUNDAMENTAL_PARAMS
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,13 @@ def generate_random_conditions(n: int = RANDOM_SEARCH_TRIALS,
             "macd_condition": random.choice(["none", "positive", "cross_up"]),
             "volatility_max": round(np.random.uniform(0.01, 0.08), 3),
         }
+
+        for fkey, (flo, fhi) in FUNDAMENTAL_PARAMS.items():
+            if random.random() < 0.5:
+                if fkey.endswith("_max"):
+                    cond[fkey] = round(np.random.uniform(flo, fhi), 2)
+                else:
+                    cond[fkey] = round(np.random.uniform(flo, fhi), 3)
 
         if cond["market_cap_min"] > cond["market_cap_max"]:
             cond["market_cap_min"], cond["market_cap_max"] = (
@@ -149,6 +156,32 @@ def apply_condition(df, cond: Dict) -> np.ndarray:
     if vol_max is not None and "volatility" in df.columns:
         mask &= (df["volatility"].values <= vol_max)
 
+    # Fundamental filters
+    _fund_min = {
+        "revenue_growth_min": "revenue_growth",
+        "eps_growth_min": "eps_growth",
+        "roe_min": "roe",
+        "op_margin_min": "op_margin",
+        "equity_ratio_min": "equity_ratio",
+    }
+    _fund_max = {
+        "per_max": "per",
+        "pbr_max": "pbr",
+    }
+    for fkey, fcol in _fund_min.items():
+        fval = cond.get(fkey)
+        if fval is not None and fcol in df.columns:
+            col_vals = df[fcol].values
+            valid = ~np.isnan(col_vals)
+            mask &= (~valid) | (col_vals >= fval)
+
+    for fkey, fcol in _fund_max.items():
+        fval = cond.get(fkey)
+        if fval is not None and fcol in df.columns:
+            col_vals = df[fcol].values
+            valid = ~np.isnan(col_vals)
+            mask &= (~valid) | (col_vals <= fval)
+
     nan_mask = True
     for col in ["next_open"]:
         if col in df.columns:
@@ -170,4 +203,22 @@ def condition_to_str(cond: Dict) -> str:
     if cond.get("price_position") != "none":
         parts.append(f"価格位置:{cond['price_position']}")
     parts.append(f"保持:{cond['holding_days']}日")
+
+    fund_labels = {
+        "revenue_growth_min": "売上成長率≥",
+        "eps_growth_min": "EPS成長率≥",
+        "roe_min": "ROE≥",
+        "op_margin_min": "営業利益率≥",
+        "per_max": "PER≤",
+        "pbr_max": "PBR≤",
+        "equity_ratio_min": "自己資本比率≥",
+    }
+    for fkey, label in fund_labels.items():
+        fval = cond.get(fkey)
+        if fval is not None:
+            if fkey in ("per_max", "pbr_max"):
+                parts.append(f"{label}{fval:.1f}")
+            else:
+                parts.append(f"{label}{fval:.1%}")
+
     return " | ".join(parts)

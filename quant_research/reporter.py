@@ -11,12 +11,38 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from .config import DATA_DIR
+import math
+
+from .config import DATA_DIR, FORWARD_PERIODS
 from .screener import apply_condition, condition_to_str
-from .backtester import BacktestResult
+from .backtester import BacktestResult, run_backtest
 
 logger = logging.getLogger(__name__)
 REPORT_DIR = DATA_DIR / "reports"
+
+
+def _sanitize_for_json(obj):
+    """Replace NaN/Inf with None for JSON serialization."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, (np.floating,)):
+        v = float(obj)
+        if math.isnan(v) or math.isinf(v):
+            return None
+        return v
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, pd.Series):
+        return obj.to_dict()
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_for_json(v) for v in obj]
+    return obj
 
 
 def generate_final_report(
@@ -26,17 +52,22 @@ def generate_final_report(
     regime_summary: pd.DataFrame,
     df: pd.DataFrame,
     current_regime: str = "unknown",
+    theme_performance: pd.DataFrame = None,
+    tenbagger_analysis: Dict = None,
+    institutional_accumulation: Dict = None,
 ) -> Dict:
     """
     全分析結果を統合して最終レポートを生成。
 
     出力:
-        1. 最も勝率が高い条件
-        2. 最もリターンが高い条件
-        3. 最も安定している条件
-        4. 現在条件に当てはまる銘柄
-        5. 売買ルール
-        6. 改善提案
+        1. 技術条件（最も勝率/リターン/安定の条件）
+        2. ファンダメンタル条件
+        3. 月間平均ヒット銘柄数
+        4. 最もパフォーマンスが良い保有期間
+        5. 現在条件に当てはまる銘柄
+        6. 最も再現性の高い戦略
+        7. テーマ分析
+        8. テンバガー分析
     """
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -63,6 +94,14 @@ def generate_final_report(
         all_results, ml_results, regime_results, current_regime
     )
 
+    holding_comparison = _compare_holding_periods(df, all_results[:10])
+
+    hit_count_summary = _summarize_hit_counts(all_results[:10])
+
+    fundamental_analysis = _analyze_fundamental_impact(all_results)
+
+    reproducible_strategy = _find_most_reproducible(optimization_results)
+
     report = {
         "timestamp": datetime.now().isoformat(),
         "current_regime": current_regime,
@@ -81,15 +120,119 @@ def generate_final_report(
             "condition_str": condition_to_str(best_stable.condition),
             "metrics": best_stable.to_dict(),
         },
+        "holding_period_comparison": holding_comparison,
+        "hit_count_summary": hit_count_summary,
+        "fundamental_analysis": fundamental_analysis,
+        "reproducible_strategy": reproducible_strategy,
         "current_signals": current_signals,
         "trading_rules": trading_rules,
         "suggestions": suggestions,
         "ml_summary": _summarize_ml(ml_results),
         "regime_summary": regime_summary.to_dict("records") if regime_summary is not None else [],
+        "theme_performance": theme_performance.to_dict("records") if theme_performance is not None and not theme_performance.empty else [],
+        "tenbagger_analysis": tenbagger_analysis or {},
+        "institutional_accumulation": institutional_accumulation or {},
     }
 
     _save_report_text(report)
-    return report
+    return _sanitize_for_json(report)
+
+
+def _compare_holding_periods(df: pd.DataFrame,
+                             top_results: List[BacktestResult]) -> List[Dict]:
+    """上位条件について各保有期間でバックテストし、比較表を生成"""
+    comparisons = []
+    holding_options = [d for d in FORWARD_PERIODS if f"fwd_{d}d_return" in df.columns]
+
+    for res in top_results[:5]:
+        cond_str = condition_to_str(res.condition)
+        row = {"condition": cond_str}
+
+        for hd in holding_options:
+            test_cond = {**res.condition, "holding_days": hd}
+            test_res = run_backtest(df, test_cond)
+            if test_res:
+                row[f"{hd}d_winrate"] = round(test_res.win_rate, 4)
+                row[f"{hd}d_return"] = round(test_res.avg_return, 6)
+                row[f"{hd}d_sharpe"] = round(test_res.sharpe_ratio, 4)
+                row[f"{hd}d_mdd"] = round(test_res.max_drawdown, 4)
+                row[f"{hd}d_pf"] = round(test_res.profit_factor, 4)
+
+        comparisons.append(row)
+
+    return comparisons
+
+
+def _summarize_hit_counts(top_results: List[BacktestResult]) -> List[Dict]:
+    """上位条件のヒットカウントサマリー"""
+    summaries = []
+    for res in top_results:
+        summaries.append({
+            "condition": condition_to_str(res.condition),
+            "holding_days": res.holding_days,
+            "avg_daily_hits": round(res.avg_daily_hits, 2),
+            "avg_monthly_hits": round(res.avg_monthly_hits, 2),
+            "avg_yearly_hits": round(res.avg_yearly_hits, 2),
+            "n_trades": res.n_trades,
+        })
+    return summaries
+
+
+def _analyze_fundamental_impact(all_results: List[BacktestResult]) -> Dict:
+    """ファンダメンタルフィルターの有無によるパフォーマンス差を分析"""
+    fund_keys = ["revenue_growth_min", "eps_growth_min", "roe_min",
+                 "op_margin_min", "per_max", "pbr_max", "equity_ratio_min"]
+
+    with_fund = [r for r in all_results if any(k in r.condition for k in fund_keys)]
+    without_fund = [r for r in all_results if not any(k in r.condition for k in fund_keys)]
+
+    def _avg_metrics(results):
+        if not results:
+            return {}
+        return {
+            "count": len(results),
+            "avg_win_rate": round(np.mean([r.win_rate for r in results]), 4),
+            "avg_return": round(np.mean([r.avg_return for r in results]), 6),
+            "avg_sharpe": round(np.mean([r.sharpe_ratio for r in results]), 4),
+            "avg_mdd": round(np.mean([r.max_drawdown for r in results]), 4),
+        }
+
+    freq = {}
+    for r in with_fund:
+        for k in fund_keys:
+            if k in r.condition:
+                freq[k] = freq.get(k, 0) + 1
+
+    return {
+        "with_fundamental": _avg_metrics(with_fund),
+        "without_fundamental": _avg_metrics(without_fund),
+        "filter_frequency": freq,
+    }
+
+
+def _find_most_reproducible(optimization_results: Dict) -> Dict:
+    """
+    OOS安定性が最も高い「最も再現性の高い戦略」を提案。
+    ランダム/ベイズ/GAの複数手法で上位に現れた条件を重視。
+    """
+    all_results = optimization_results.get("all", [])
+    if not all_results:
+        return {}
+
+    best = max(all_results, key=lambda r: (
+        r.sharpe_ratio * 0.4
+        + r.win_rate * 0.3
+        + min(r.profit_factor / 3.0, 1.0) * 0.2
+        - abs(r.max_drawdown) * 0.1
+    ))
+
+    return {
+        "condition": best.condition,
+        "condition_str": condition_to_str(best.condition),
+        "metrics": best.to_dict(),
+        "rationale": "シャープレシオ×安定性の複合スコアで最も高い条件。"
+                     "複数最適化手法で上位に位置する再現性の高い戦略。",
+    }
 
 
 def _scan_current_signals(df: pd.DataFrame,
@@ -284,11 +427,85 @@ def _save_report_text(report: Dict) -> Path:
         lines.append(f"    期待リターン: {rule['expected_return']}")
         lines.append("")
 
-    lines.extend(["■ 6. 改善提案"])
+    lines.extend(["", "■ 6. 保有期間比較"])
+    for row in report.get("holding_period_comparison", []):
+        lines.append(f"  条件: {row.get('condition', '')}")
+        for k, v in row.items():
+            if k != "condition" and "winrate" in k:
+                period = k.split("d_")[0]
+                lines.append(
+                    f"    {period}日: WR={v:.1%}, "
+                    f"Ret={row.get(f'{period}d_return', 0):.2%}, "
+                    f"SR={row.get(f'{period}d_sharpe', 0):.2f}, "
+                    f"MDD={row.get(f'{period}d_mdd', 0):.1%}"
+                )
+        lines.append("")
+
+    lines.extend(["■ 7. ヒットカウント分析"])
+    for row in report.get("hit_count_summary", []):
+        lines.append(
+            f"  {row.get('condition', '')}: "
+            f"日平均{row.get('avg_daily_hits', 0):.1f}銘柄, "
+            f"月平均{row.get('avg_monthly_hits', 0):.1f}銘柄, "
+            f"年平均{row.get('avg_yearly_hits', 0):.0f}銘柄"
+        )
+
+    fund = report.get("fundamental_analysis", {})
+    if fund:
+        lines.extend(["", "■ 8. ファンダメンタル分析"])
+        wf = fund.get("with_fundamental", {})
+        wof = fund.get("without_fundamental", {})
+        if wf:
+            lines.append(f"  ファンダ有 ({wf.get('count', 0)}条件): "
+                         f"WR={wf.get('avg_win_rate', 0):.1%}, "
+                         f"Ret={wf.get('avg_return', 0):.2%}, "
+                         f"SR={wf.get('avg_sharpe', 0):.2f}")
+        if wof:
+            lines.append(f"  ファンダ無 ({wof.get('count', 0)}条件): "
+                         f"WR={wof.get('avg_win_rate', 0):.1%}, "
+                         f"Ret={wof.get('avg_return', 0):.2%}, "
+                         f"SR={wof.get('avg_sharpe', 0):.2f}")
+        freq = fund.get("filter_frequency", {})
+        if freq:
+            lines.append("  よく使われるフィルター:")
+            for k, v in sorted(freq.items(), key=lambda x: -x[1]):
+                lines.append(f"    {k}: {v}回")
+
+    repro = report.get("reproducible_strategy", {})
+    if repro:
+        lines.extend(["", "■ 9. 最も再現性の高い戦略"])
+        lines.append(f"  条件: {repro.get('condition_str', '')}")
+        m = repro.get("metrics", {})
+        lines.append(f"  WR={m.get('win_rate', 0):.1%}, "
+                     f"SR={m.get('sharpe_ratio', 0):.2f}, "
+                     f"MDD={m.get('max_drawdown', 0):.1%}")
+        lines.append(f"  理由: {repro.get('rationale', '')}")
+
+    theme_perf = report.get("theme_performance", [])
+    if theme_perf:
+        lines.extend(["", "■ 10. テーマ別パフォーマンス"])
+        for tp in theme_perf[:20]:
+            lines.append(
+                f"  {tp.get('theme', '')} ({tp.get('period', '')}): "
+                f"平均{tp.get('mean_return', 0):.2%}, "
+                f"WR={tp.get('win_rate', 0):.1%}, "
+                f"({tp.get('n_stocks', 0)}銘柄)"
+            )
+
+    tenbagger = report.get("tenbagger_analysis", {})
+    if tenbagger and tenbagger.get("count", 0) > 0:
+        lines.extend(["", "■ 11. テンバガー候補分析"])
+        lines.append(f"  検出数: {tenbagger.get('count', 0)}")
+        lines.append(f"  平均倍率: {tenbagger.get('avg_multiple', 0):.1f}x")
+        td = tenbagger.get("theme_distribution", {})
+        if td:
+            lines.append(f"  テーマ分布: {td}")
+
+    lines.extend(["", "■ 12. 改善提案"])
     for i, s in enumerate(report.get("suggestions", []), 1):
         lines.append(f"  {i}. {s}")
 
-    lines.extend(["", "■ ML モデルサマリー"])
+    lines.extend(["", "■ 13. ML モデルサマリー"])
     for name, summary in report.get("ml_summary", {}).items():
         lines.append(f"  {name}: AUC={summary['avg_auc']:.4f}, "
                      f"Precision={summary['avg_precision']:.4f}")
@@ -531,6 +748,96 @@ def plot_volume_institutional_correlation(stock_df: pd.DataFrame,
     axes[1, 1].set_ylabel("Avg Institutional Net")
 
     plt.suptitle("Hypothesis: Volume Surge = Institutional Buying?", fontsize=14, y=1.02)
+    plt.tight_layout()
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return fig
+
+
+def plot_holding_period_comparison(holding_comparison: List[Dict],
+                                   save_path: str = None):
+    """保有期間別パフォーマンス比較チャート"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    if not holding_comparison:
+        return None
+
+    periods = []
+    for key in holding_comparison[0]:
+        if key.endswith("d_winrate"):
+            periods.append(int(key.replace("d_winrate", "")))
+    periods.sort()
+
+    if not periods:
+        return None
+
+    n_conds = min(len(holding_comparison), 5)
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+
+    for i, row in enumerate(holding_comparison[:n_conds]):
+        label = f"Cond {i+1}"
+        wrs = [row.get(f"{p}d_winrate", 0) for p in periods]
+        rets = [row.get(f"{p}d_return", 0) * 100 for p in periods]
+        srs = [row.get(f"{p}d_sharpe", 0) for p in periods]
+
+        axes[0].plot(periods, wrs, "o-", label=label)
+        axes[1].plot(periods, rets, "o-", label=label)
+        axes[2].plot(periods, srs, "o-", label=label)
+
+    axes[0].set_xlabel("Holding Days")
+    axes[0].set_ylabel("Win Rate")
+    axes[0].set_title("Win Rate by Holding Period")
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
+
+    axes[1].set_xlabel("Holding Days")
+    axes[1].set_ylabel("Avg Return (%)")
+    axes[1].set_title("Average Return by Holding Period")
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
+
+    axes[2].set_xlabel("Holding Days")
+    axes[2].set_ylabel("Sharpe Ratio")
+    axes[2].set_title("Sharpe Ratio by Holding Period")
+    axes[2].legend()
+    axes[2].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return fig
+
+
+def plot_theme_performance(theme_performance: pd.DataFrame,
+                           save_path: str = None):
+    """テーマ別パフォーマンスチャート"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    if theme_performance is None or theme_performance.empty:
+        return None
+
+    pivot = theme_performance.pivot_table(
+        index="theme", columns="period",
+        values="mean_return", aggfunc="first"
+    )
+
+    if pivot.empty:
+        return None
+
+    fig, ax = plt.subplots(figsize=(14, 7))
+    pivot.plot(kind="bar", ax=ax, alpha=0.8)
+    ax.set_xlabel("Theme")
+    ax.set_ylabel("Mean Return")
+    ax.set_title("Theme Performance by Holding Period")
+    ax.legend(title="Period", bbox_to_anchor=(1.05, 1), loc="upper left")
+    ax.grid(True, alpha=0.3, axis="y")
+
     plt.tight_layout()
     if save_path:
         fig.savefig(save_path, dpi=150, bbox_inches="tight")

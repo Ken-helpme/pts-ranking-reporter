@@ -81,12 +81,19 @@ def main():
         raw_data = _load_raw_data_if_needed()
 
         from .feature_engine import compute_all_features
+        from .config import FORWARD_PERIODS
+        from .fundamental import compute_fundamental_features
 
         df = compute_all_features(
             df,
             fins=raw_data.get("fins_summary"),
-            forward_periods=[3, 5, 10],
+            forward_periods=FORWARD_PERIODS,
         )
+
+        fins_data = raw_data.get("fins_summary")
+        if fins_data is not None and not fins_data.empty:
+            logger.info("Merging fundamental features...")
+            df = compute_fundamental_features(df, fins_data)
 
         logger.info(f"特徴量計算完了: {len(df.columns)}列")
         _save_intermediate("df_features", df)
@@ -240,6 +247,12 @@ def main():
             plot_equity_curves, plot_optimization_landscape,
             plot_feature_importance, plot_regime_performance,
             plot_volume_institutional_correlation,
+            plot_holding_period_comparison, plot_theme_performance,
+        )
+        from .theme_analyzer import (
+            classify_themes, analyze_theme_performance,
+            find_tenbaggers, detect_institutional_accumulation,
+            get_tenbagger_common_features,
         )
         from .config import DATA_DIR
 
@@ -249,6 +262,37 @@ def main():
         regime_results = _load_results("regime_results")
         regime_summary = _load_intermediate("regime_summary")
         current_regime = _load_results("current_regime")
+        raw_data = _load_raw_data_if_needed()
+
+        theme_performance = pd.DataFrame()
+        tenbagger_analysis = {}
+        institutional_accum = {}
+        theme_map = {}
+
+        from .data_fetcher import _load_cache as _lc
+        master_data = raw_data.get("master")
+        if master_data is None or (hasattr(master_data, 'empty') and master_data.empty):
+            master_data = _lc("master")
+        if master_data is not None and not master_data.empty:
+            logger.info("Running theme classification...")
+            theme_map = classify_themes(master_data)
+            theme_performance = analyze_theme_performance(df, theme_map)
+
+        logger.info("Running tenbagger analysis...")
+        tenbaggers_df = find_tenbaggers(df, min_multiple=2.0)
+        tenbagger_analysis = get_tenbagger_common_features(tenbaggers_df, theme_map)
+
+        logger.info("Detecting institutional accumulation signals...")
+        accum_mask = detect_institutional_accumulation(df)
+        n_accum = accum_mask.sum()
+        institutional_accum = {
+            "total_signals": int(n_accum),
+            "unique_stocks": int(df.loc[accum_mask, "Code"].nunique()) if n_accum > 0 else 0,
+        }
+        if n_accum > 0:
+            latest_date = df["Date"].max()
+            latest_accum = df.loc[accum_mask & (df["Date"] == latest_date)]
+            institutional_accum["current_candidates"] = latest_accum[["Code", "Close", "vol_ratio"]].to_dict("records") if not latest_accum.empty else []
 
         report = generate_final_report(
             optimization_results=opt_results or {},
@@ -257,6 +301,9 @@ def main():
             regime_summary=regime_summary,
             df=df,
             current_regime=current_regime or "unknown",
+            theme_performance=theme_performance,
+            tenbagger_analysis=tenbagger_analysis,
+            institutional_accumulation=institutional_accum,
         )
 
         report_dir = DATA_DIR / "reports"
@@ -286,12 +333,37 @@ def main():
                 save_path=str(report_dir / "regime_performance.png"),
             )
 
-        raw_data = _load_raw_data_if_needed()
         if raw_data.get("investor_types") is not None:
             plot_volume_institutional_correlation(
                 df, raw_data["investor_types"],
                 save_path=str(report_dir / "vol_institutional_correlation.png"),
             )
+
+        holding_comp = report.get("holding_period_comparison", [])
+        if holding_comp:
+            plot_holding_period_comparison(
+                holding_comp,
+                save_path=str(report_dir / "holding_period_comparison.png"),
+            )
+
+        if not theme_performance.empty:
+            plot_theme_performance(
+                theme_performance,
+                save_path=str(report_dir / "theme_performance.png"),
+            )
+
+        # Historical validation
+        if opt_results and "all" in opt_results and opt_results["all"]:
+            from .historical_validator import run_full_historical_validation
+            logger.info("\nRunning historical validation on best condition...")
+            best_cond = opt_results["all"][0].condition
+            hist_validation = run_full_historical_validation(
+                df, best_cond,
+                months_back=[3, 6, 12],
+                forward_days=[20, 60, 120],
+            )
+            _save_results("historical_validation", hist_validation)
+            report["historical_validation"] = hist_validation.get("summary", {})
 
         logger.info(f"\nレポート出力先: {report_dir}")
         n_signals = len(report.get("current_signals", []))
@@ -350,10 +422,9 @@ def _load_results(name: str):
 
 def _load_raw_data_if_needed() -> dict:
     """キャッシュ済みのParquetから生データを読み込み"""
-    from .data_fetcher import (
-        _load_cache,
-    )
+    from .data_fetcher import _load_cache
     return {
+        "master": _load_cache("master"),
         "topix": _load_cache("index_topix"),
         "nikkei": _load_cache("index_nikkei"),
         "investor_types": _load_cache("investor_types"),

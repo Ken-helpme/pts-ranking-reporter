@@ -10,7 +10,11 @@ import os
 # Add parent directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from models import init_db, save_pts_data, get_latest_ranking, get_historical_data, get_statistics, save_trending_stocks, get_trending_stocks, get_trending_dates, save_optimization_result, get_latest_optimization, save_auto_optimization_log, get_auto_optimization_history
+from models import (init_db, save_pts_data, get_latest_ranking, get_historical_data,
+                     get_statistics, save_trending_stocks, get_trending_stocks,
+                     get_trending_dates, save_optimization_result, get_latest_optimization,
+                     save_auto_optimization_log, get_auto_optimization_history,
+                     save_signal_history, get_signal_history)
 from trending_stock_fetcher import TrendingStockFetcher
 from scraper import KabutanScraper
 from analyzer import PTSAnalyzer
@@ -697,6 +701,60 @@ def screening_run_auto_optimize():
         return jsonify({'success': False, 'error': str(e)})
 
 
+# ========== シグナル監視 ==========
+
+@app.route('/signals')
+def signals_page():
+    """シグナル監視ページ"""
+    return render_template('signals.html')
+
+
+@app.route('/api/signals/list')
+def signals_list():
+    """現在のシグナル一覧（カテゴリ別 + チャートデータ付き）"""
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'quant_research'))
+        from signal_monitor import get_signal_stocks
+        data_dir = os.path.join(os.path.dirname(__file__), '..', 'quant_research', 'data')
+        result = get_signal_stocks(data_dir)
+        if 'error' in result:
+            return jsonify({'success': False, 'error': result['error']})
+
+        # Persist current signals to DB for future disappearance tracking
+        all_sigs = result.get('all_signals', [])
+        if all_sigs:
+            db_records = []
+            for s in all_sigs:
+                db_records.append({
+                    'code_full': s.get('code_full', s.get('code', '')),
+                    'name': s.get('name', ''),
+                    'sector': s.get('sector', ''),
+                    'signal_date': result['latest_date'],
+                    'close': s.get('close'),
+                    'vol_base_ratio': s.get('vol_base_ratio'),
+                    'vol_above_count': s.get('vol_above_count'),
+                    'turnover_avg': s.get('turnover_avg'),
+                    'rsi': s.get('rsi'),
+                    'ma25_dev': s.get('ma25_dev'),
+                    'op_growth': s.get('op_growth'),
+                    'eps_growth': s.get('eps_growth'),
+                    'first_detected': s.get('first_detected', ''),
+                })
+            save_signal_history(db_records)
+
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/signals/refresh', methods=['POST'])
+def signals_refresh():
+    """シグナルを再計算して最新データを返す"""
+    return signals_list()
+
+
 # ========== クオンツ分析 ==========
 
 # .env ファイルを読み込み
@@ -777,12 +835,15 @@ def quant_run():
                 job['progress_label'] = 'データ取得中...'
 
                 from quant_research.data_fetcher import fetch_all, prepare_price_dataframe
-                raw_data = fetch_all(years=10)
+                from quant_research.config import DATA_YEARS
+
+                raw_data = fetch_all(years=DATA_YEARS)
                 df = prepare_price_dataframe(raw_data['prices'], raw_data['master'])
 
                 import pandas as pd
-                df.to_pickle(os.path.join(os.path.dirname(__file__), '..', 'quant_research', 'data', '_intermediate_df_prepared.pkl'))
-                pd.to_pickle(raw_data, os.path.join(os.path.dirname(__file__), '..', 'quant_research', 'data', '_intermediate_raw_data.pkl'))
+                data_dir = os.path.join(os.path.dirname(__file__), '..', 'quant_research', 'data')
+                df.to_pickle(os.path.join(data_dir, '_intermediate_df_prepared.pkl'))
+                pd.to_pickle(raw_data, os.path.join(data_dir, '_intermediate_raw_data.pkl'))
                 job['logs'].append({'msg': f'データ取得完了: {df["Code"].nunique():,}銘柄, {len(df):,}行', 'type': 'success'})
 
             # STEP 2: features
@@ -797,7 +858,16 @@ def quant_run():
                 raw_data = pd.read_pickle(os.path.join(data_dir, '_intermediate_raw_data.pkl'))
 
                 from quant_research.feature_engine import compute_all_features
-                df = compute_all_features(df, fins=raw_data.get('fins_summary'), forward_periods=[3, 5, 10])
+                from quant_research.config import FORWARD_PERIODS
+                from quant_research.fundamental import compute_fundamental_features
+
+                df = compute_all_features(df, fins=raw_data.get('fins_summary'), forward_periods=FORWARD_PERIODS)
+
+                fins_data = raw_data.get('fins_summary')
+                if fins_data is not None and not fins_data.empty:
+                    df = compute_fundamental_features(df, fins_data)
+                    job['logs'].append({'msg': 'ファンダメンタル特徴量をマージしました', 'type': 'info'})
+
                 df.to_pickle(os.path.join(data_dir, '_intermediate_df_features.pkl'))
                 job['logs'].append({'msg': f'特徴量計算完了: {len(df.columns)}列', 'type': 'success'})
 
@@ -937,7 +1007,43 @@ def quant_run():
                     generate_final_report,
                     plot_equity_curves, plot_optimization_landscape,
                     plot_feature_importance, plot_regime_performance,
+                    plot_holding_period_comparison, plot_theme_performance,
                 )
+                from quant_research.theme_analyzer import (
+                    classify_themes, analyze_theme_performance,
+                    find_tenbaggers, detect_institutional_accumulation,
+                    get_tenbagger_common_features,
+                )
+
+                theme_performance = pd.DataFrame()
+                tenbagger_analysis = {}
+                institutional_accum = {}
+                theme_map = {}
+
+                raw_data2 = pd.read_pickle(os.path.join(data_dir, '_intermediate_raw_data.pkl'))
+                master_data = raw_data2.get('master')
+                if master_data is not None and not master_data.empty:
+                    theme_map = classify_themes(master_data)
+                    theme_performance = analyze_theme_performance(df, theme_map)
+                    job['logs'].append({'msg': f'テーマ分類完了: {len(theme_map)}銘柄', 'type': 'info'})
+
+                tenbaggers_df = find_tenbaggers(df, min_multiple=2.0)
+                tenbagger_analysis = get_tenbagger_common_features(tenbaggers_df, theme_map)
+
+                accum_mask = detect_institutional_accumulation(df)
+                n_accum = int(accum_mask.sum())
+                institutional_accum = {
+                    'total_signals': n_accum,
+                    'unique_stocks': int(df.loc[accum_mask, 'Code'].nunique()) if n_accum > 0 else 0,
+                }
+                if n_accum > 0:
+                    latest_date = df['Date'].max()
+                    latest_accum = df.loc[accum_mask & (df['Date'] == latest_date)]
+                    institutional_accum['current_candidates'] = (
+                        latest_accum[['Code', 'Close', 'vol_ratio']].to_dict('records')
+                        if not latest_accum.empty else []
+                    )
+                    job['logs'].append({'msg': f'機関仕込みシグナル: {n_accum}件検出', 'type': 'info'})
 
                 report = generate_final_report(
                     optimization_results=opt_results or {},
@@ -946,6 +1052,9 @@ def quant_run():
                     regime_summary=regime_summary,
                     df=df,
                     current_regime=current_regime or 'unknown',
+                    theme_performance=theme_performance,
+                    tenbagger_analysis=tenbagger_analysis,
+                    institutional_accumulation=institutional_accum,
                 )
 
                 report_dir = os.path.join(data_dir, 'reports')
@@ -969,8 +1078,52 @@ def quant_run():
                     plot_regime_performance(regime_summary, save_path=os.path.join(report_dir, 'regime_performance.png'))
                     charts.append('regime_performance.png')
 
+                holding_comp = report.get('holding_period_comparison', [])
+                if holding_comp:
+                    plot_holding_period_comparison(holding_comp,
+                                                   save_path=os.path.join(report_dir, 'holding_period_comparison.png'))
+                    charts.append('holding_period_comparison.png')
+
+                if not theme_performance.empty:
+                    plot_theme_performance(theme_performance,
+                                           save_path=os.path.join(report_dir, 'theme_performance.png'))
+                    charts.append('theme_performance.png')
+
                 report['charts'] = charts
-                job['report'] = report
+
+                # Historical validation
+                if opt_results and 'all' in opt_results and opt_results['all']:
+                    from quant_research.historical_validator import run_full_historical_validation
+                    job['logs'].append({'msg': '過去時点スクリーニング検証を実行中...', 'type': 'info'})
+                    best_cond = opt_results['all'][0].condition
+                    try:
+                        hist_validation = run_full_historical_validation(
+                            df, best_cond,
+                            months_back=[3, 6, 12],
+                            forward_days=[20, 60, 120],
+                        )
+                        report['historical_validation'] = hist_validation.get('summary', {})
+                        report['historical_details'] = {
+                            'win_analysis': hist_validation.get('win_analysis', {}),
+                            'winners_vs_losers': hist_validation.get('winners_vs_losers', {}),
+                            'examples': hist_validation.get('examples', {}),
+                            'hit_stats': hist_validation.get('hit_stats', {}),
+                        }
+                        pd.to_pickle(hist_validation, os.path.join(data_dir, '_results_historical_validation.pkl'))
+
+                        summary = hist_validation.get('summary', {})
+                        wr = summary.get('actual_win_rate', 0)
+                        avg_ret = summary.get('average_return', 0)
+                        best_pd = summary.get('best_holding_period', '?')
+                        job['logs'].append({
+                            'msg': f'過去検証完了: 勝率{wr:.1%}, 平均リターン{avg_ret:.2%}, 最良期間={best_pd}',
+                            'type': 'success'
+                        })
+                    except Exception as val_e:
+                        job['logs'].append({'msg': f'過去検証でエラー: {val_e}', 'type': 'error'})
+
+                from quant_research.reporter import _sanitize_for_json
+                job['report'] = _sanitize_for_json(report)
                 job['logs'].append({'msg': f'レポート生成完了 — シグナル銘柄: {len(report.get("current_signals", []))}件', 'type': 'success'})
 
             job['status'] = 'done'
