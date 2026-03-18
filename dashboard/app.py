@@ -8,7 +8,9 @@ import sys
 import os
 
 # Add parent directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+_base = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_base, '..', 'src'))
+sys.path.insert(0, os.path.join(_base, '..', 'quant_research'))
 
 from models import (init_db, save_pts_data, get_latest_ranking, get_historical_data,
                      get_statistics, save_trending_stocks, get_trending_stocks,
@@ -713,9 +715,8 @@ def signals_page():
 def signals_list():
     """現在のシグナル一覧（カテゴリ別 + チャートデータ付き）"""
     try:
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'quant_research'))
         from signal_monitor import get_signal_stocks
-        data_dir = os.path.join(os.path.dirname(__file__), '..', 'quant_research', 'data')
+        data_dir = os.path.join(_base, '..', 'quant_research', 'data')
         result = get_signal_stocks(data_dir)
         if 'error' in result:
             return jsonify({'success': False, 'error': result['error']})

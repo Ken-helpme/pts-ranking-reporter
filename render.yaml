@@ -3,7 +3,7 @@ services:
     name: pts-ranking-dashboard
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: cd dashboard && gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    startCommand: export PYTHONPATH=$PWD/src:$PWD/quant_research && cd dashboard && gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false
