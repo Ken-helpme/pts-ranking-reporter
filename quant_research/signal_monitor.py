@@ -332,6 +332,29 @@ def get_signal_stocks(data_dir: Optional[str] = None, force: bool = False) -> di
     sig_df = df[df['_signal']].copy()
     first_signal = sig_df.groupby('CodeStr')['Date'].min().to_dict()
 
+    # VB start price: close on the first day vol_base_ratio exceeded 1.3x
+    vb_cross = df[df['vol_base_ratio'] >= 1.3].sort_values('Date')
+    vb_first = vb_cross.groupby('CodeStr').first()
+    vb_start_price_map = vb_first['Close'].to_dict()
+    vb_start_date_map = {c: pd.Timestamp(d).strftime('%Y-%m-%d')
+                         for c, d in vb_first['Date'].to_dict().items()}
+
+    # Continuous signal days: count consecutive trailing signal days per stock
+    def _signal_streak(group):
+        sig = group['_signal'].values
+        n = len(sig)
+        streak = 0
+        for i in range(n - 1, -1, -1):
+            if sig[i]:
+                streak += 1
+            else:
+                break
+        return streak
+    signal_streak_map = {}
+    for code in current_codes:
+        grp = df[df['CodeStr'] == code].sort_values('Date')
+        signal_streak_map[code] = _signal_streak(grp)
+
     # Last-N trading-day sets
     last_5 = set(all_dates[-5:])
     last_10 = set(all_dates[-10:])
@@ -393,13 +416,33 @@ def get_signal_stocks(data_dir: Optional[str] = None, force: bool = False) -> di
             fs = first_signal.get(code)
             fs_str = pd.Timestamp(fs).strftime('%Y-%m-%d') if pd.notna(fs) else ''
 
+            # Phase classification by VB ratio
+            vb = float(r['vol_base_ratio']) if pd.notna(r['vol_base_ratio']) else 0
+            if vb >= 3.5:
+                phase = '過熱'
+            elif vb >= 2.0:
+                phase = '加速中'
+            else:
+                phase = '初動'
+
+            # Price vs VB-start (how far above the accumulation start price)
+            start_px = vb_start_price_map.get(code)
+            cur_px = float(r['Close']) if pd.notna(r['Close']) else 0
+            if start_px and start_px > 0 and cur_px > 0:
+                price_vs_start = round((cur_px - start_px) / start_px * 100, 1)
+            else:
+                price_vs_start = None
+            is_done = price_vs_start is not None and price_vs_start > 15
+
+            sig_days = signal_streak_map.get(code, 0)
+
             records.append({
                 'code': code[:4] if len(code) > 4 else code,
                 'code_full': code,
                 'name': str(name_map.get(code, code))[:30],
                 'sector': str(sector_map.get(code, ''))[:14],
-                'close': float(r['Close']) if pd.notna(r['Close']) else 0,
-                'vol_base_ratio': round(float(r['vol_base_ratio']), 2) if pd.notna(r['vol_base_ratio']) else 0,
+                'close': cur_px,
+                'vol_base_ratio': round(vb, 2),
                 'vol_above_count': int(r['vol_above_count_20d']) if pd.notna(r['vol_above_count_20d']) else 0,
                 'turnover_avg': round(float(r['turnover_avg_20']) / 1e8, 1) if pd.notna(r['turnover_avg_20']) else 0,
                 'rsi': round(float(r['rsi']), 1) if pd.notna(r['rsi']) else 0,
@@ -409,6 +452,12 @@ def get_signal_stocks(data_dir: Optional[str] = None, force: bool = False) -> di
                 'trend': trend,
                 'first_detected': fs_str,
                 'detection_dates': det_str,
+                'phase': phase,
+                'price_vs_start': price_vs_start,
+                'vb_start_price': round(start_px, 1) if start_px else None,
+                'vb_start_date': vb_start_date_map.get(code),
+                'is_done': is_done,
+                'signal_days': sig_days,
                 'chart_dates': chart_dates,
                 'chart_prices': [round(p, 1) if pd.notna(p) else 0 for p in chart_prices],
                 'chart_volumes': [int(v) if pd.notna(v) else 0 for v in chart_volumes],

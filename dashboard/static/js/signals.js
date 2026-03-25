@@ -4,8 +4,8 @@
 
 let signalData = null;
 let currentTab = 'all';
-let sortKey = 'vol_base_ratio';
-let sortAsc = false;
+let sortKey = 'signal_days';
+let sortAsc = true;
 
 document.addEventListener('DOMContentLoaded', () => {
     loadSignals();
@@ -141,13 +141,32 @@ function getVisibleStocks() {
     }
 }
 
+function applyFilters(stocks) {
+    const earlyOnly = document.getElementById('filterEarlyOnly')?.checked;
+    const hideDone = document.getElementById('filterHideDone')?.checked;
+    const maxDays = parseInt(document.getElementById('filterMaxDays')?.value || '999', 10);
+
+    const phaseChecks = document.querySelectorAll('.phase-check input');
+    const allowedPhases = new Set();
+    phaseChecks.forEach(cb => { if (cb.checked) allowedPhases.add(cb.value); });
+
+    return stocks.filter(s => {
+        if (hideDone && s.is_done) return false;
+        if (earlyOnly && s.phase !== '初動') return false;
+        if (!allowedPhases.has(s.phase || '初動')) return false;
+        if (s.signal_days > maxDays) return false;
+        return true;
+    });
+}
+
 function renderTable() {
     let stocks = getVisibleStocks();
+    stocks = applyFilters(stocks);
     stocks = sortStocks(stocks, sortKey, sortAsc);
 
     const tbody = document.getElementById('signalBody');
     if (!stocks.length) {
-        tbody.innerHTML = '<tr><td colspan="15" class="empty-msg">該当銘柄なし</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="17" class="empty-msg">該当銘柄なし</td></tr>';
         return;
     }
 
@@ -164,22 +183,35 @@ function renderTable() {
         const epsG = s.eps_growth != null ? `${s.eps_growth >= 0 ? '+' : ''}${s.eps_growth}%` : '-';
         const devCls = s.ma25_dev >= 0 ? 'chg-pos' : 'chg-neg';
 
-        const badge = s.is_accel ? '<span class="badge-accel">加速</span>'
+        const typeBadge = s.is_accel ? '<span class="badge-accel">加速</span>'
             : s.is_ultra_early ? '<span class="badge-ultra-early">超初動</span>'
             : isNewStock(s) ? '<span class="badge-new">NEW</span>' : '';
+
+        const phaseCls = s.phase === '過熱' ? 'phase-hot'
+            : s.phase === '加速中' ? 'phase-accel' : 'phase-early';
+        const phaseBadge = `<span class="badge-phase ${phaseCls}">${esc(s.phase || '初動')}</span>`;
+        const doneBadge = s.is_done ? ' <span class="badge-done">済</span>' : '';
+
+        const riseStr = s.price_vs_start != null
+            ? `<span class="${s.price_vs_start > 15 ? 'chg-neg' : s.price_vs_start > 0 ? 'chg-pos' : ''}">${s.price_vs_start >= 0 ? '+' : ''}${s.price_vs_start}%</span>`
+            : '-';
 
         const chart = (s.chart_dates && s.chart_dates.length > 5)
             ? buildSignalChart(s.chart_dates, s.chart_prices, s.chart_volumes, s.signal_indices || [])
             : '<span class="no-chart">-</span>';
 
-        html += `<tr>
+        const rowCls = s.is_done ? 'row-done' : '';
+
+        html += `<tr class="${rowCls}">
+            <td>${phaseBadge}${doneBadge}</td>
             <td>${esc(s.first_detected || '')}</td>
-            <td><a href="https://kabutan.jp/stock/?code=${esc(code4)}" target="_blank" class="stock-link">${esc(code4)}</a> ${badge}</td>
+            <td><a href="https://kabutan.jp/stock/?code=${esc(code4)}" target="_blank" class="stock-link">${esc(code4)}</a> ${typeBadge}</td>
             <td class="name-cell" title="${esc(s.name || '')}">${esc(s.name || '')}</td>
             <td class="sector-cell">${esc(s.sector || '')}</td>
             <td class="num">¥${fmtNum(s.close)}</td>
+            <td class="num">${riseStr}</td>
             <td class="num vb-cell">${s.vol_base_ratio}x</td>
-            <td class="num">${s.vol_above_count}日</td>
+            <td class="num">${s.signal_days ?? s.vol_above_count}日</td>
             <td class="num">${s.turnover_avg}億</td>
             <td class="num">${s.rsi}</td>
             <td class="num ${devCls}">${s.ma25_dev >= 0 ? '+' : ''}${s.ma25_dev}%</td>

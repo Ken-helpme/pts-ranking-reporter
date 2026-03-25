@@ -346,6 +346,79 @@
     color: #60a5fa;
 }
 
+/* Filter bar */
+.filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 10px 16px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-top: none;
+    font-size: 12px;
+    flex-wrap: wrap;
+}
+
+.filter-toggle {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    font-weight: 500;
+    color: #475569;
+}
+
+.filter-toggle input[type="checkbox"] {
+    accent-color: #2563eb;
+}
+
+.filter-phases {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.phase-check {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    font-weight: 500;
+    color: #475569;
+}
+
+.phase-check input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+}
+
+.phase-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.phase-dot-early { background: #16a34a; }
+.phase-dot-accel { background: #f59e0b; }
+.phase-dot-hot   { background: #dc2626; }
+
+.filter-days {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #475569;
+    font-weight: 500;
+}
+
+.filter-days select {
+    padding: 3px 8px;
+    border: 1px solid #e2e8f0;
+    border-radius: 5px;
+    font-size: 12px;
+    background: #fff;
+}
+
 /* Signal table */
 .signal-table-wrap {
     overflow-x: auto;
@@ -511,6 +584,47 @@
     color: #fff;
     vertical-align: middle;
     margin-left: 4px;
+}
+
+/* Phase badges */
+.badge-phase {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+}
+
+.phase-early {
+    background: #dcfce7;
+    color: #15803d;
+}
+
+.phase-accel {
+    background: #fef3c7;
+    color: #b45309;
+}
+
+.phase-hot {
+    background: #fee2e2;
+    color: #dc2626;
+}
+
+.badge-done {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 9px;
+    font-weight: 700;
+    background: #94a3b8;
+    color: #fff;
+    vertical-align: middle;
+    margin-left: 3px;
+}
+
+.row-done {
+    opacity: 0.5;
 }
 
 /* Tab accents */

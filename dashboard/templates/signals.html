@@ -119,18 +119,47 @@
                 </button>
             </div>
 
+            <!-- フィルターバー -->
+            <div class="filter-bar">
+                <label class="filter-toggle">
+                    <input type="checkbox" id="filterEarlyOnly" onchange="renderTable()">
+                    <span>初動のみ表示</span>
+                </label>
+                <label class="filter-toggle">
+                    <input type="checkbox" id="filterHideDone" onchange="renderTable()">
+                    <span>「済」を非表示</span>
+                </label>
+                <div class="filter-phases">
+                    <label class="phase-check"><input type="checkbox" value="初動" checked onchange="renderTable()"><span class="phase-dot phase-dot-early"></span>初動</label>
+                    <label class="phase-check"><input type="checkbox" value="加速中" checked onchange="renderTable()"><span class="phase-dot phase-dot-accel"></span>加速中</label>
+                    <label class="phase-check"><input type="checkbox" value="過熱" checked onchange="renderTable()"><span class="phase-dot phase-dot-hot"></span>過熱</label>
+                </div>
+                <div class="filter-days">
+                    <label>継続日 ≤</label>
+                    <select id="filterMaxDays" onchange="renderTable()">
+                        <option value="999">すべて</option>
+                        <option value="3">3日</option>
+                        <option value="5" selected>5日</option>
+                        <option value="10">10日</option>
+                        <option value="20">20日</option>
+                    </select>
+                </div>
+            </div>
+
             <!-- テーブル -->
             <div class="signal-table-wrap">
                 <table class="signal-table">
                     <thead>
                         <tr>
+                            <th>フェーズ</th>
                             <th class="sortable" data-sort="first_detected">初検知</th>
                             <th>コード</th>
                             <th>銘柄名</th>
                             <th>業種</th>
                             <th class="num sortable" data-sort="close">株価</th>
+                            <th class="num sortable" data-sort="price_vs_start">上昇率</th>
                             <th class="num sortable" data-sort="vol_base_ratio">VB倍率</th>
-                            <th class="num sortable" data-sort="vol_above_count">継続日</th>
+                            <th class="num sortable" data-sort="signal_days">継続日</th>
                             <th class="num">売代(億)</th>
                             <th class="num sortable" data-sort="rsi">RSI</th>
                             <th class="num">25MA乖離</th>
