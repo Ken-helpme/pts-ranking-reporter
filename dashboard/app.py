@@ -752,8 +752,43 @@ def signals_list():
 
 @app.route('/api/signals/refresh', methods=['POST'])
 def signals_refresh():
-    """シグナルを再計算して最新データを返す"""
-    return signals_list()
+    """シグナルを再計算して最新データを返す（キャッシュ無視）"""
+    try:
+        from signal_monitor import get_signal_stocks
+        data_dir = os.path.join(_base, '..', 'quant_research', 'data')
+        result = get_signal_stocks(data_dir, force=True)
+        if 'error' in result:
+            return jsonify({'success': False, 'error': result['error']})
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/signals/scheduled-refresh', methods=['POST', 'GET'])
+def signals_scheduled_refresh():
+    """
+    Cloud Scheduler から毎朝6時・夕方4時の自動更新用。
+    ヘッダ X-Scheduler-Secret が環境変数 SIGNALS_SCHEDULER_SECRET と一致する場合のみ実行。
+    """
+    expected = os.environ.get('SIGNALS_SCHEDULER_SECRET', '').strip()
+    if not expected:
+        return jsonify({'success': False, 'error': 'SIGNALS_SCHEDULER_SECRET not set'}), 503
+    got = request.headers.get('X-Scheduler-Secret', '').strip()
+    if got != expected:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+    try:
+        from signal_monitor import get_signal_stocks
+        data_dir = os.path.join(_base, '..', 'quant_research', 'data')
+        result = get_signal_stocks(data_dir, force=True)
+        if 'error' in result:
+            return jsonify({'success': False, 'error': result['error']}), 500
+        return jsonify({'success': True, 'latest_date': result.get('latest_date')})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # ========== クオンツ分析 ==========

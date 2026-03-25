@@ -36,16 +36,25 @@ jobs:
           docker push ${{ env.IMAGE }}:latest
 
       - name: Deploy to Cloud Run
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
+          SIGNALS_SCHEDULER_SECRET: ${{ secrets.SIGNALS_SCHEDULER_SECRET }}
         run: |
+          VARS="PYTHONPATH=/app/src:/app/quant_research,ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY},JQUANTS_API_KEY=${JQUANTS_API_KEY}"
+          if [ -n "${SIGNALS_SCHEDULER_SECRET}" ]; then
+            VARS="${VARS},SIGNALS_SCHEDULER_SECRET=${SIGNALS_SCHEDULER_SECRET}"
+          fi
           gcloud run deploy ${{ env.SERVICE }} \
             --image=${{ env.IMAGE }}:${{ github.sha }} \
             --region=${{ env.REGION }} \
             --project=${{ env.PROJECT_ID }} \
             --allow-unauthenticated \
             --ingress=all \
-            --memory=1Gi \
+            --memory=4Gi \
+            --cpu=2 \
             --timeout=300 \
-            --set-env-vars="PYTHONPATH=/app/src,ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }},JQUANTS_API_KEY=${{ secrets.JQUANTS_API_KEY }}" \
+            --update-env-vars="$VARS" \
             --quiet
 
       - name: Health check and debug

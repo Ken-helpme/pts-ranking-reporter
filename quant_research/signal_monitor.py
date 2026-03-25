@@ -140,11 +140,25 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
         else:
             df['turnover_avg_20'] = np.nan
 
+    # 50-day high distance (for post-peak decline filter)
+    df['pct_from_50d_high'] = (df['Close'] - df['high_50d']) / df['high_50d']
+
     if 'ma25_dev' not in df.columns:
         df['ma25_dev'] = (df['Close'] - df['ma25']) / df['ma25'] * 100
     if 'ma25_slope' not in df.columns:
         df['ma25_slope'] = df.groupby('CodeStr')['ma25'].transform(
             lambda x: x.diff(5) / x.shift(5) * 100)
+
+    # TOB detection: price frozen for 3+ of last 5 days
+    zero_ret_count = df.groupby('CodeStr')['Close'].transform(
+        lambda x: x.pct_change().eq(0).rolling(5, min_periods=3).sum())
+    df['price_frozen_5d'] = zero_ret_count >= 3
+
+    # Volume jump features for ultra-early detection
+    df['vol_vs_120d'] = df['Volume'] / df['vol_avg_120']
+    df['vol_jump'] = df['Volume'] / df.groupby('CodeStr')['Volume'].shift(1)
+    df['daily_ret'] = df.groupby('CodeStr')['Close'].pct_change()
+
     return df
 
 
@@ -153,12 +167,14 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def compute_signals(df: pd.DataFrame, etf_codes: set, growing_codes: set) -> pd.Series:
-    """Return boolean mask for stealth accumulation signal rows."""
+    """Confirmed stealth accumulation. Excludes post-peak decline and TOB stocks."""
     return (
         (df['vol_base_ratio'] >= 1.5) &
         (df['vol_above_count_20d'] >= 8) &
         (df['ma25_dev'].abs() <= 10) &
         (df['rsi'] <= 65) &
+        (df['pct_from_50d_high'] >= -0.10) &
+        (~df['price_frozen_5d']) &
         (df['turnover_avg_20'] >= 3e8) &
         (~df['CodeStr'].isin(etf_codes)) &
         (df['ma25_slope'] >= 0) &
@@ -167,19 +183,48 @@ def compute_signals(df: pd.DataFrame, etf_codes: set, growing_codes: set) -> pd.
     )
 
 
+def compute_ultra_early_signals(df: pd.DataFrame, etf_codes: set,
+                                 growing_codes: set) -> pd.Series:
+    """
+    Ultra-early volume-jump detection (超初動シグナル).
+    Detects FIRST DAY of a volume surge: today vs 120d avg AND vs yesterday.
+    """
+    return (
+        (df['vol_vs_120d'] >= 1.5) &
+        (df['vol_jump'] >= 2.0) &
+        (df['daily_ret'] >= -0.03) &
+        (df['pct_from_50d_high'] >= -0.05) &
+        (~df['price_frozen_5d']) &
+        (df['turnover_avg_20'] >= 1e8) &
+        (~df['CodeStr'].isin(etf_codes)) &
+        (df['CodeStr'].isin(growing_codes)) &
+        (~df['_signal'])
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public entry point — called by Flask
 # ---------------------------------------------------------------------------
 
-def get_signal_stocks(data_dir: Optional[str] = None) -> dict:
+_cached_result = {'data': None, 'ts': 0}
+try:
+    _SIGNALS_CACHE_TTL = int(os.environ.get('SIGNALS_CACHE_TTL_SEC', '86400'))
+except ValueError:
+    _SIGNALS_CACHE_TTL = 86400
+
+
+def get_signal_stocks(data_dir: Optional[str] = None, force: bool = False) -> dict:
     """
     Compute current signal stocks, categorise by age, detect disappearances,
     and return chart data for each stock.
 
-    Returns dict with keys:
-        latest_date, summary, new_5d, recent_10d, continuing, disappeared,
-        all_signals (flat list).
+    Cached for 24h (override with SIGNALS_CACHE_TTL_SEC env var).
+    Pass force=True to bypass cache (used by scheduled-refresh endpoint).
     """
+    import time as _time
+    if not force and _cached_result['data'] and (_time.time() - _cached_result['ts']) < _SIGNALS_CACHE_TTL:
+        return _cached_result['data']
+
     ddir = Path(data_dir) if data_dir else DATA_DIR
     feat_path = ddir / '_vol_base_features.pkl'
     raw_path = ddir / '_intermediate_raw_data.pkl'
@@ -210,8 +255,9 @@ def get_signal_stocks(data_dir: Optional[str] = None) -> dict:
     # Earnings growth
     growing_codes, op_map, eps_map = _compute_growing_codes(fins)
 
-    # Signal mask for entire history
+    # Signal masks
     df['_signal'] = compute_signals(df, etf_codes, growing_codes)
+    df['_ultra_early'] = compute_ultra_early_signals(df, etf_codes, growing_codes)
 
     all_dates = sorted(df['Date'].unique())
     latest_date = all_dates[-1]
@@ -355,10 +401,17 @@ def get_signal_stocks(data_dir: Optional[str] = None) -> dict:
 
     disap_records.sort(key=lambda x: x['last_signal_date'], reverse=True)
 
-    all_signals = new_records + recent_records + cont_records
-    avg_vb = round(np.mean([s['vol_base_ratio'] for s in all_signals]), 2) if all_signals else 0
+    # Ultra-early records (latest date only)
+    ue_mask = (df['Date'] == latest_date) & df['_ultra_early']
+    ue_codes = set(df.loc[ue_mask, 'CodeStr'])
+    ue_records = _build_records(ue_codes, latest_rows, df)
+    for r in ue_records:
+        r['is_ultra_early'] = True
 
-    return {
+    all_signals = new_records + recent_records + cont_records
+    avg_vb = round(float(np.mean([s['vol_base_ratio'] for s in all_signals])), 2) if all_signals else 0
+
+    result = {
         'latest_date': latest_date_str,
         'summary': {
             'total': len(all_signals),
@@ -366,11 +419,17 @@ def get_signal_stocks(data_dir: Optional[str] = None) -> dict:
             'recent_10d': len(recent_records),
             'continuing': len(cont_records),
             'disappeared': len(disap_records),
+            'ultra_early': len(ue_records),
             'avg_vb_ratio': avg_vb,
         },
+        'ultra_early': ue_records,
         'new_5d': new_records,
         'recent_10d': recent_records,
         'continuing': cont_records,
         'disappeared': disap_records,
         'all_signals': all_signals,
     }
+
+    _cached_result['data'] = result
+    _cached_result['ts'] = _time.time()
+    return result
