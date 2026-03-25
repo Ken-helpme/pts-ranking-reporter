@@ -113,7 +113,7 @@
 /* Summary cards */
 .summary-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(6, 1fr);
     gap: 14px;
     margin-bottom: 20px;
 }
@@ -148,6 +148,14 @@
 
 .summary-new .summary-value {
     color: #2563eb;
+}
+
+.summary-ultra-early .summary-value {
+    color: #f59e0b;
+}
+
+.summary-accel .summary-value {
+    color: #8b5cf6;
 }
 
 .summary-disappeared .summary-value {
@@ -481,6 +489,41 @@
     margin-left: 4px;
 }
 
+.badge-ultra-early {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 9px;
+    font-weight: 700;
+    background: #f59e0b;
+    color: #fff;
+    vertical-align: middle;
+    margin-left: 4px;
+}
+
+.badge-accel {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 9px;
+    font-weight: 700;
+    background: #8b5cf6;
+    color: #fff;
+    vertical-align: middle;
+    margin-left: 4px;
+}
+
+/* Tab accents */
+.tab-ultra-early.active {
+    color: #f59e0b;
+    border-bottom-color: #f59e0b;
+}
+
+.tab-accel.active {
+    color: #8b5cf6;
+    border-bottom-color: #8b5cf6;
+}
+
 /* Trend labels */
 .trend-strong {
     color: #16a34a;
@@ -529,6 +572,12 @@
 }
 
 /* Responsive */
+@media (max-width: 1100px) {
+    .summary-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
 @media (max-width: 900px) {
     .summary-grid {
         grid-template-columns: repeat(2, 1fr);

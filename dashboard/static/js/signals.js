@@ -65,9 +65,13 @@ function renderSummary(data) {
     document.getElementById('signalDate').textContent = data.latest_date || '';
     document.getElementById('totalCount').textContent = s.total ?? '-';
     document.getElementById('newCount').textContent = s.new_5d ?? '-';
+    document.getElementById('ultraEarlyCount').textContent = s.ultra_early ?? '-';
+    document.getElementById('accelCount').textContent = s.accel ?? '-';
     document.getElementById('disappearedCount').textContent = s.disappeared ?? '-';
     document.getElementById('avgVB').textContent = s.avg_vb_ratio ?? '-';
     document.getElementById('tabAllCount').textContent = s.total ? `(${s.total})` : '';
+    document.getElementById('tabUltraEarlyCount').textContent = s.ultra_early ? `(${s.ultra_early})` : '';
+    document.getElementById('tabAccelCount').textContent = s.accel ? `(${s.accel})` : '';
     document.getElementById('tabNewCount').textContent = s.new_5d ? `(${s.new_5d})` : '';
     document.getElementById('tabRecentCount').textContent = s.recent_10d ? `(${s.recent_10d})` : '';
     document.getElementById('tabContCount').textContent = s.continuing ? `(${s.continuing})` : '';
@@ -128,6 +132,8 @@ function switchTab(tab) {
 function getVisibleStocks() {
     if (!signalData) return [];
     switch (currentTab) {
+        case 'ultra_early': return signalData.ultra_early || [];
+        case 'accel': return signalData.accel || [];
         case 'new_5d': return signalData.new_5d || [];
         case 'recent_10d': return signalData.recent_10d || [];
         case 'continuing': return signalData.continuing || [];
@@ -158,7 +164,9 @@ function renderTable() {
         const epsG = s.eps_growth != null ? `${s.eps_growth >= 0 ? '+' : ''}${s.eps_growth}%` : '-';
         const devCls = s.ma25_dev >= 0 ? 'chg-pos' : 'chg-neg';
 
-        const badge = isNewStock(s) ? '<span class="badge-new">NEW</span>' : '';
+        const badge = s.is_accel ? '<span class="badge-accel">加速</span>'
+            : s.is_ultra_early ? '<span class="badge-ultra-early">超初動</span>'
+            : isNewStock(s) ? '<span class="badge-new">NEW</span>' : '';
 
         const chart = (s.chart_dates && s.chart_dates.length > 5)
             ? buildSignalChart(s.chart_dates, s.chart_prices, s.chart_volumes, s.signal_indices || [])

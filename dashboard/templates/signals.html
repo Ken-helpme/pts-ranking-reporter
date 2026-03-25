@@ -53,6 +53,16 @@
                 <div class="summary-value" id="newCount">-</div>
                 <div class="summary-sub">銘柄</div>
             </div>
+            <div class="summary-card summary-ultra-early">
+                <div class="summary-label">超初動</div>
+                <div class="summary-value" id="ultraEarlyCount">-</div>
+                <div class="summary-sub">銘柄</div>
+            </div>
+            <div class="summary-card summary-accel">
+                <div class="summary-label">加速</div>
+                <div class="summary-value" id="accelCount">-</div>
+                <div class="summary-sub">銘柄</div>
+            </div>
             <div class="summary-card summary-disappeared">
                 <div class="summary-label">消失</div>
                 <div class="summary-value" id="disappearedCount">-</div>
@@ -91,6 +101,12 @@
             <div class="tab-bar">
                 <button class="tab-btn active" data-tab="all" onclick="switchTab('all')">
                     すべて <span id="tabAllCount" class="tab-count"></span>
+                </button>
+                <button class="tab-btn tab-ultra-early" data-tab="ultra_early" onclick="switchTab('ultra_early')">
+                    超初動 <span id="tabUltraEarlyCount" class="tab-count"></span>
+                </button>
+                <button class="tab-btn tab-accel" data-tab="accel" onclick="switchTab('accel')">
+                    加速 <span id="tabAccelCount" class="tab-count"></span>
                 </button>
                 <button class="tab-btn" data-tab="new_5d" onclick="switchTab('new_5d')">
                     新規 (5日) <span id="tabNewCount" class="tab-count"></span>

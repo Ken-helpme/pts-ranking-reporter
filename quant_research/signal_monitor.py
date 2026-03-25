@@ -113,6 +113,34 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
     if 'vol_base_ratio' not in df.columns:
         df['vol_base_ratio'] = df['vol_avg_20'] / df['vol_avg_120']
 
+    # Lagged baseline: 120d average shifted by 5 days (excludes recent surge)
+    df['vol_avg_120_lagged'] = df.groupby('CodeStr')['Volume'].transform(
+        lambda x: x.shift(5).rolling(120, min_periods=80).mean())
+    # Recent 5-day average vs lagged 120d baseline
+    df['vol_avg_5'] = df.groupby('CodeStr')['Volume'].transform(
+        lambda x: x.rolling(5, min_periods=3).mean())
+    df['vol_base_ratio_lagged'] = df['vol_avg_5'] / df['vol_avg_120_lagged']
+
+    # Recent 3-day average (for ultra-early gradual increase detection)
+    df['vol_avg_3'] = df.groupby('CodeStr')['Volume'].transform(
+        lambda x: x.rolling(3, min_periods=2).mean())
+    df['vol_3d_vs_120d'] = df['vol_avg_3'] / df['vol_avg_120']
+
+    # Short-term above-baseline count: 5 days out of 5 above 120d avg
+    def _count_5d(group):
+        vol = group['Volume'].values
+        avg120 = group['vol_avg_120'].values
+        result = np.full(len(vol), np.nan)
+        for i in range(4, len(vol)):
+            window = vol[i - 4:i + 1]
+            baseline = avg120[i]
+            if np.isnan(baseline) or baseline <= 0:
+                continue
+            result[i] = np.sum(window > baseline)
+        return pd.Series(result, index=group.index)
+    df['vol_above_count_5d'] = df.groupby('CodeStr').apply(
+        _count_5d).reset_index(level=0, drop=True)
+
     if 'vol_above_count_20d' not in df.columns:
         def _count(group):
             vol = group['Volume'].values
@@ -125,7 +153,8 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
                     continue
                 result[i] = np.sum(window > baseline)
             return pd.Series(result, index=group.index)
-        df['vol_above_count_20d'] = df.groupby('CodeStr').apply(_count).reset_index(level=0, drop=True)
+        df['vol_above_count_20d'] = df.groupby('CodeStr').apply(
+            _count).reset_index(level=0, drop=True)
 
     if 'high_50d' not in df.columns:
         df['high_50d'] = df.groupby('CodeStr')['Close'].transform(
@@ -140,7 +169,6 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
         else:
             df['turnover_avg_20'] = np.nan
 
-    # 50-day high distance (for post-peak decline filter)
     df['pct_from_50d_high'] = (df['Close'] - df['high_50d']) / df['high_50d']
 
     if 'ma25_dev' not in df.columns:
@@ -154,10 +182,16 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
         lambda x: x.pct_change().eq(0).rolling(5, min_periods=3).sum())
     df['price_frozen_5d'] = zero_ret_count >= 3
 
-    # Volume jump features for ultra-early detection
+    # Volume jump features
     df['vol_vs_120d'] = df['Volume'] / df['vol_avg_120']
     df['vol_jump'] = df['Volume'] / df.groupby('CodeStr')['Volume'].shift(1)
     df['daily_ret'] = df.groupby('CodeStr')['Close'].pct_change()
+
+    # Volume acceleration: 3 consecutive days of vol_jump >= 1.3 (前日比+30%)
+    df['_vj_ok'] = (df['vol_jump'].fillna(0) >= 1.3).astype(int)
+    df['vol_accel_3d'] = df.groupby('CodeStr')['_vj_ok'].transform(
+        lambda x: x.rolling(3, min_periods=3).min())
+    df.drop(columns=['_vj_ok'], inplace=True)
 
     return df
 
@@ -167,10 +201,14 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def compute_signals(df: pd.DataFrame, etf_codes: set, growing_codes: set) -> pd.Series:
-    """Confirmed stealth accumulation. Excludes post-peak decline and TOB stocks."""
+    """
+    Confirmed stealth accumulation.
+    Uses lagged 120d baseline (excludes recent 5 days from average)
+    and short-term above-count (5 days out of 5 >= 3) for faster detection.
+    """
     return (
-        (df['vol_base_ratio'] >= 1.5) &
-        (df['vol_above_count_20d'] >= 8) &
+        (df['vol_base_ratio_lagged'] >= 1.5) &
+        (df['vol_above_count_5d'] >= 3) &
         (df['ma25_dev'].abs() <= 10) &
         (df['rsi'] <= 65) &
         (df['pct_from_50d_high'] >= -0.10) &
@@ -186,12 +224,10 @@ def compute_signals(df: pd.DataFrame, etf_codes: set, growing_codes: set) -> pd.
 def compute_ultra_early_signals(df: pd.DataFrame, etf_codes: set,
                                  growing_codes: set) -> pd.Series:
     """
-    Ultra-early volume-jump detection (超初動シグナル).
-    Detects FIRST DAY of a volume surge: today vs 120d avg AND vs yesterday.
+    Ultra-early volume detection (超初動シグナル).
+    Two paths: single-day spike OR gradual 3-day buildup.
     """
-    return (
-        (df['vol_vs_120d'] >= 1.5) &
-        (df['vol_jump'] >= 2.0) &
+    common = (
         (df['daily_ret'] >= -0.03) &
         (df['pct_from_50d_high'] >= -0.05) &
         (~df['price_frozen_5d']) &
@@ -199,6 +235,30 @@ def compute_ultra_early_signals(df: pd.DataFrame, etf_codes: set,
         (~df['CodeStr'].isin(etf_codes)) &
         (df['CodeStr'].isin(growing_codes)) &
         (~df['_signal'])
+    )
+    # Path A: single-day spike vs 120d avg
+    spike = (df['vol_vs_120d'] >= 1.5)
+    # Path B: gradual 3-day buildup (じわじわ型)
+    gradual = (df['vol_3d_vs_120d'] >= 1.8)
+    return common & (spike | gradual)
+
+
+def compute_accel_signals(df: pd.DataFrame, etf_codes: set,
+                          growing_codes: set) -> pd.Series:
+    """
+    Volume acceleration signal (出来高加速シグナル).
+    Fires when volume increases 30%+ day-over-day for 3 consecutive days.
+    Catches the 'run-up' before a multiplier threshold is reached.
+    """
+    return (
+        (df['vol_accel_3d'] >= 1) &
+        (df['daily_ret'] >= -0.03) &
+        (df['pct_from_50d_high'] >= -0.05) &
+        (~df['price_frozen_5d']) &
+        (df['turnover_avg_20'] >= 1e8) &
+        (~df['CodeStr'].isin(etf_codes)) &
+        (df['CodeStr'].isin(growing_codes)) &
+        (~df['_signal']) & (~df['_ultra_early'])
     )
 
 
@@ -255,9 +315,10 @@ def get_signal_stocks(data_dir: Optional[str] = None, force: bool = False) -> di
     # Earnings growth
     growing_codes, op_map, eps_map = _compute_growing_codes(fins)
 
-    # Signal masks
+    # Signal masks (order matters — later ones exclude earlier)
     df['_signal'] = compute_signals(df, etf_codes, growing_codes)
     df['_ultra_early'] = compute_ultra_early_signals(df, etf_codes, growing_codes)
+    df['_accel'] = compute_accel_signals(df, etf_codes, growing_codes)
 
     all_dates = sorted(df['Date'].unique())
     latest_date = all_dates[-1]
@@ -408,6 +469,13 @@ def get_signal_stocks(data_dir: Optional[str] = None, force: bool = False) -> di
     for r in ue_records:
         r['is_ultra_early'] = True
 
+    # Acceleration records (latest date only)
+    accel_mask = (df['Date'] == latest_date) & df['_accel']
+    accel_codes = set(df.loc[accel_mask, 'CodeStr'])
+    accel_records = _build_records(accel_codes, latest_rows, df)
+    for r in accel_records:
+        r['is_accel'] = True
+
     all_signals = new_records + recent_records + cont_records
     avg_vb = round(float(np.mean([s['vol_base_ratio'] for s in all_signals])), 2) if all_signals else 0
 
@@ -420,9 +488,11 @@ def get_signal_stocks(data_dir: Optional[str] = None, force: bool = False) -> di
             'continuing': len(cont_records),
             'disappeared': len(disap_records),
             'ultra_early': len(ue_records),
+            'accel': len(accel_records),
             'avg_vb_ratio': avg_vb,
         },
         'ultra_early': ue_records,
+        'accel': accel_records,
         'new_5d': new_records,
         'recent_10d': recent_records,
         'continuing': cont_records,
