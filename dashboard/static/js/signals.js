@@ -165,7 +165,7 @@ function renderTable() {
 
     const tbody = document.getElementById('signalBody');
     if (!stocks.length) {
-        tbody.innerHTML = '<tr><td colspan="18" class="empty-msg">該当銘柄なし</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="19" class="empty-msg">該当銘柄なし</td></tr>';
         return;
     }
 
@@ -205,6 +205,9 @@ function renderTable() {
 
         const rowCls = s.is_done ? 'row-done' : '';
 
+        const mlScore = s.ml_score != null ? s.ml_score : '-';
+        const mlCls = s.ml_score >= 70 ? 'ml-high' : s.ml_score >= 40 ? 'ml-mid' : s.ml_score != null ? 'ml-low' : '';
+
         html += `<tr class="${rowCls}">
             <td>${phaseBadge}${doneBadge}</td>
             <td class="num">${dsdStr}</td>
@@ -213,6 +216,7 @@ function renderTable() {
             <td class="sector-cell">${esc(s.sector || '')}</td>
             <td class="num">¥${fmtNum(s.close)}</td>
             <td class="num">${riseStr}</td>
+            <td class="num ${mlCls}">${mlScore}</td>
             <td class="num vb-cell">${s.vol_base_ratio}x</td>
             <td class="num">${s.signal_days ?? s.vol_above_count}日</td>
             <td class="num">${s.turnover_avg}億</td>

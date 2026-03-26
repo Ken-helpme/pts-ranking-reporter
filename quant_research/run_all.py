@@ -37,7 +37,8 @@ logger = logging.getLogger("quant_research")
 def main():
     parser = argparse.ArgumentParser(description="機関投資家資金流入シグナル研究パイプライン")
     parser.add_argument("--step", type=str, default="all",
-                        choices=["data", "features", "backtest", "optimize", "ml", "regime", "report", "all"],
+                        choices=["data", "features", "backtest", "optimize", "ml", "regime", "report",
+                                 "ml_v2", "strategy", "all"],
                         help="実行するステップ")
     parser.add_argument("--fast", action="store_true",
                         help="高速モード（試行回数を大幅削減）")
@@ -185,6 +186,52 @@ def main():
                         f"Recall={avg.get('recall', 0):.4f}")
 
         _save_results("ml_results", ml_results)
+
+    # ================================================================
+    # STEP 6b: 本格MLパイプライン (ml_v2)
+    # ================================================================
+    if "ml_v2" in steps:
+        logger.info("\n" + "=" * 60)
+        logger.info("STEP 6b: 本格MLパイプライン (Ensemble + Stacking)")
+        logger.info("=" * 60)
+
+        df = _load_intermediate("df_features")
+        raw_data = _load_raw_data_if_needed()
+        index_df = raw_data.get("topix") or raw_data.get("nikkei")
+
+        from .ml_pipeline import run_full_pipeline
+
+        n_trials = 30 if args.fast else 100
+        ml_v2_results = run_full_pipeline(
+            df, index_df=index_df,
+            n_optuna_trials=n_trials,
+            train_end="2023-12-31",
+            val_end="2024-06-30",
+        )
+
+        _save_results("ml_v2_results", ml_v2_results)
+
+    # ================================================================
+    # STEP 6c: 戦略グリッドサーチ (strategy)
+    # ================================================================
+    if "strategy" in steps:
+        logger.info("\n" + "=" * 60)
+        logger.info("STEP 6c: 戦略グリッドサーチ")
+        logger.info("=" * 60)
+
+        df = _load_intermediate("df_features")
+
+        from .strategy_search import run_strategy_search
+
+        strategy_results = run_strategy_search(
+            df,
+            train_end="2023-12-31",
+            min_trades=30,
+            min_test_winrate=0.55,
+            max_entry_combos=5000 if args.fast else 20000,
+        )
+
+        _save_results("strategy_results", strategy_results)
 
     # ================================================================
     # STEP 7: 市場レジーム分析
@@ -381,9 +428,11 @@ def main():
 
 def _resolve_steps(step: str) -> list:
     """ステップ名を実行すべきステップのリストに変換"""
-    order = ["data", "features", "backtest", "optimize", "ml", "regime", "report"]
+    order = ["data", "features", "backtest", "optimize", "ml", "ml_v2", "strategy", "regime", "report"]
     if step == "all":
         return order
+    if step in ("ml_v2", "strategy"):
+        return ["data", "features", step]
     idx = order.index(step)
     return order[:idx + 1]
 

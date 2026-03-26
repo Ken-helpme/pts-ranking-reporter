@@ -533,6 +533,20 @@
     color: #2563eb;
 }
 
+.ml-high {
+    font-weight: 700;
+    color: #16a34a;
+}
+
+.ml-mid {
+    font-weight: 600;
+    color: #f59e0b;
+}
+
+.ml-low {
+    color: #94a3b8;
+}
+
 .chart-col {
     min-width: 200px;
     width: 280px;

@@ -550,6 +550,24 @@ def get_signal_stocks(data_dir: Optional[str] = None, force: bool = False) -> di
         r['is_accel'] = True
 
     all_signals = new_records + recent_records + cont_records
+
+    # ML scoring (optional — only if model exists)
+    try:
+        from .ml_pipeline import load_model_and_score
+        ml_scores = load_model_and_score(df[df['Date'] == latest_date])
+        if not ml_scores.empty:
+            score_map = {}
+            scored_rows = df[df['Date'] == latest_date]
+            for idx, val in ml_scores.items():
+                if pd.notna(val) and idx in scored_rows.index:
+                    code = scored_rows.loc[idx, 'CodeStr']
+                    score_map[code] = round(float(val), 1)
+            for rec_list in [all_signals, ue_records, accel_records]:
+                for rec in rec_list:
+                    rec['ml_score'] = score_map.get(rec['code_full'])
+    except Exception as e:
+        logger.debug("ML scoring skipped: %s", e)
+
     avg_vb = round(float(np.mean([s['vol_base_ratio'] for s in all_signals])), 2) if all_signals else 0
 
     result = {
