@@ -32,11 +32,19 @@ def _ensure_data_from_gcs(data_dir: Path) -> bool:
         data_dir.mkdir(parents=True, exist_ok=True)
         for fname in missing:
             blob = bucket.blob(f"{GCS_PREFIX}/{fname}")
+            if not blob.exists():
+                logger.warning("GCS blob %s/%s does not exist", GCS_PREFIX, fname)
+                continue
             dest = data_dir / fname
             logger.info("Downloading gs://%s/%s/%s -> %s", GCS_BUCKET, GCS_PREFIX, fname, dest)
             blob.download_to_filename(str(dest))
-            logger.info("Downloaded %s (%.1f MB)", fname, dest.stat().st_size / 1e6)
-        return True
+            local_size = dest.stat().st_size
+            remote_size = blob.size
+            logger.info("Downloaded %s (%.1f MB, remote %.1f MB)", fname, local_size / 1e6, (remote_size or 0) / 1e6)
+            if remote_size and local_size < remote_size * 0.95:
+                logger.warning("Downloaded file size mismatch for %s: local=%d remote=%d, removing", fname, local_size, remote_size)
+                dest.unlink(missing_ok=True)
+        return all((data_dir / f).exists() for f in _DATA_FILES)
     except ImportError:
         logger.warning("google-cloud-storage not installed, skipping GCS download")
         return False
@@ -116,10 +124,11 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
     # Lagged baseline: 120d average shifted by 5 days (excludes recent surge)
     df['vol_avg_120_lagged'] = df.groupby('CodeStr')['Volume'].transform(
         lambda x: x.shift(5).rolling(120, min_periods=80).mean())
-    # Recent 5-day average vs lagged 120d baseline
+    # Recent 5-day average vs lagged 120d baseline (fallback to non-lagged when NaN)
     df['vol_avg_5'] = df.groupby('CodeStr')['Volume'].transform(
         lambda x: x.rolling(5, min_periods=3).mean())
-    df['vol_base_ratio_lagged'] = df['vol_avg_5'] / df['vol_avg_120_lagged']
+    lagged_base = df['vol_avg_120_lagged'].fillna(df['vol_avg_120'])
+    df['vol_base_ratio_lagged'] = df['vol_avg_5'] / lagged_base
 
     # Recent 3-day average (for ultra-early gradual increase detection)
     df['vol_avg_3'] = df.groupby('CodeStr')['Volume'].transform(
@@ -127,19 +136,11 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
     df['vol_3d_vs_120d'] = df['vol_avg_3'] / df['vol_avg_120']
 
     # Short-term above-baseline count: 5 days out of 5 above 120d avg
-    def _count_5d(group):
-        vol = group['Volume'].values
-        avg120 = group['vol_avg_120'].values
-        result = np.full(len(vol), np.nan)
-        for i in range(4, len(vol)):
-            window = vol[i - 4:i + 1]
-            baseline = avg120[i]
-            if np.isnan(baseline) or baseline <= 0:
-                continue
-            result[i] = np.sum(window > baseline)
-        return pd.Series(result, index=group.index)
-    df['vol_above_count_5d'] = df.groupby('CodeStr').apply(
-        _count_5d).reset_index(level=0, drop=True)
+    df['_above_120'] = (df['Volume'] > df['vol_avg_120']).astype(float)
+    df.loc[df['vol_avg_120'].isna() | (df['vol_avg_120'] <= 0), '_above_120'] = np.nan
+    df['vol_above_count_5d'] = df.groupby('CodeStr')['_above_120'].transform(
+        lambda x: x.rolling(5, min_periods=3).sum())
+    df.drop(columns=['_above_120'], inplace=True)
 
     if 'vol_above_count_20d' not in df.columns:
         def _count(group):
@@ -190,7 +191,7 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
     # Volume acceleration: 3 consecutive days of vol_jump >= 1.3 (前日比+30%)
     df['_vj_ok'] = (df['vol_jump'].fillna(0) >= 1.3).astype(int)
     df['vol_accel_3d'] = df.groupby('CodeStr')['_vj_ok'].transform(
-        lambda x: x.rolling(3, min_periods=3).min())
+        lambda x: x.rolling(3, min_periods=3).min()).fillna(0)
     df.drop(columns=['_vj_ok'], inplace=True)
 
     return df
@@ -295,8 +296,24 @@ def get_signal_stocks(data_dir: Optional[str] = None, force: bool = False) -> di
     if not feat_path.exists() or not raw_path.exists():
         return {'error': 'Data files not found. Run the quant pipeline first.'}
 
-    df = pd.read_pickle(feat_path)
-    raw = pd.read_pickle(raw_path)
+    try:
+        df = pd.read_pickle(feat_path)
+        raw = pd.read_pickle(raw_path)
+    except Exception as pkl_err:
+        logger.warning("Pickle read failed (%s), removing corrupt files and retrying GCS download", pkl_err)
+        for p in (feat_path, raw_path):
+            try:
+                p.unlink(missing_ok=True)
+            except OSError:
+                pass
+        _ensure_data_from_gcs(ddir)
+        if not feat_path.exists() or not raw_path.exists():
+            return {'error': f'Pickle files corrupted and re-download failed: {pkl_err}'}
+        try:
+            df = pd.read_pickle(feat_path)
+            raw = pd.read_pickle(raw_path)
+        except Exception as e2:
+            return {'error': f'Pickle files still corrupted after re-download: {e2}'}
     master = raw.get('master')
     fins = raw.get('fins_summary', pd.DataFrame())
 
@@ -333,27 +350,27 @@ def get_signal_stocks(data_dir: Optional[str] = None, force: bool = False) -> di
     first_signal = sig_df.groupby('CodeStr')['Date'].min().to_dict()
 
     # VB start price: close on the first day vol_base_ratio exceeded 1.3x
-    vb_cross = df[df['vol_base_ratio'] >= 1.3].sort_values('Date')
+    # within the recent lookback (last 60 trading days) to stay relevant
+    lookback_dates = set(all_dates[-60:]) if len(all_dates) >= 60 else set(all_dates)
+    vb_cross = df[(df['vol_base_ratio'] >= 1.3) & (df['Date'].isin(lookback_dates))].sort_values('Date')
     vb_first = vb_cross.groupby('CodeStr').first()
     vb_start_price_map = vb_first['Close'].to_dict()
     vb_start_date_map = {c: pd.Timestamp(d).strftime('%Y-%m-%d')
                          for c, d in vb_first['Date'].to_dict().items()}
 
-    # Continuous signal days: count consecutive trailing signal days per stock
-    def _signal_streak(group):
-        sig = group['_signal'].values
-        n = len(sig)
-        streak = 0
-        for i in range(n - 1, -1, -1):
-            if sig[i]:
-                streak += 1
-            else:
-                break
-        return streak
+    # Continuous signal days: count consecutive trailing True from latest date
     signal_streak_map = {}
-    for code in current_codes:
-        grp = df[df['CodeStr'] == code].sort_values('Date')
-        signal_streak_map[code] = _signal_streak(grp)
+    if current_codes:
+        _sig_sorted = df[df['CodeStr'].isin(current_codes)].sort_values(['CodeStr', 'Date'])
+        for code, grp in _sig_sorted.groupby('CodeStr'):
+            sig = grp['_signal'].fillna(False).values
+            streak = 0
+            for i in range(len(sig) - 1, -1, -1):
+                if sig[i]:
+                    streak += 1
+                else:
+                    break
+            signal_streak_map[code] = streak
 
     # Last-N trading-day sets
     last_5 = set(all_dates[-5:])
