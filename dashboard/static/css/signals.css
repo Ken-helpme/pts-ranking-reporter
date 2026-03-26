@@ -372,6 +372,12 @@
     accent-color: #2563eb;
 }
 
+.filter-label {
+    font-weight: 600;
+    color: #475569;
+    margin-right: 2px;
+}
+
 .filter-phases {
     display: flex;
     align-items: center;

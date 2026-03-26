@@ -121,25 +121,22 @@
 
             <!-- フィルターバー -->
             <div class="filter-bar">
-                <label class="filter-toggle">
-                    <input type="checkbox" id="filterEarlyOnly" onchange="renderTable()">
-                    <span>初動のみ表示</span>
-                </label>
-                <label class="filter-toggle">
-                    <input type="checkbox" id="filterHideDone" onchange="renderTable()">
-                    <span>「済」を非表示</span>
-                </label>
                 <div class="filter-phases">
+                    <span class="filter-label">フェーズ:</span>
                     <label class="phase-check"><input type="checkbox" value="初動" checked onchange="renderTable()"><span class="phase-dot phase-dot-early"></span>初動</label>
-                    <label class="phase-check"><input type="checkbox" value="加速中" checked onchange="renderTable()"><span class="phase-dot phase-dot-accel"></span>加速中</label>
-                    <label class="phase-check"><input type="checkbox" value="過熱" checked onchange="renderTable()"><span class="phase-dot phase-dot-hot"></span>過熱</label>
+                    <label class="phase-check"><input type="checkbox" value="加速中" onchange="renderTable()"><span class="phase-dot phase-dot-accel"></span>加速中</label>
+                    <label class="phase-check"><input type="checkbox" value="過熱" onchange="renderTable()"><span class="phase-dot phase-dot-hot"></span>過熱</label>
                 </div>
+                <label class="filter-toggle">
+                    <input type="checkbox" id="filterHideDone" checked onchange="renderTable()">
+                    <span>「済(+20%超)」非表示</span>
+                </label>
                 <div class="filter-days">
                     <label>継続日 ≤</label>
                     <select id="filterMaxDays" onchange="renderTable()">
-                        <option value="999">すべて</option>
+                        <option value="999" selected>すべて</option>
                         <option value="3">3日</option>
-                        <option value="5" selected>5日</option>
+                        <option value="5">5日</option>
                         <option value="10">10日</option>
                         <option value="20">20日</option>
                     </select>
@@ -152,7 +149,7 @@
                     <thead>
                         <tr>
                             <th>フェーズ</th>
-                            <th class="sortable" data-sort="first_detected">初検知</th>
+                            <th class="num sortable" data-sort="days_since_detected">経過日</th>
                             <th>コード</th>
                             <th>銘柄名</th>
                             <th>業種</th>

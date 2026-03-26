@@ -4,7 +4,7 @@
 
 let signalData = null;
 let currentTab = 'all';
-let sortKey = 'signal_days';
+let sortKey = 'vol_base_ratio';
 let sortAsc = true;
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -142,7 +142,6 @@ function getVisibleStocks() {
 }
 
 function applyFilters(stocks) {
-    const earlyOnly = document.getElementById('filterEarlyOnly')?.checked;
     const hideDone = document.getElementById('filterHideDone')?.checked;
     const maxDays = parseInt(document.getElementById('filterMaxDays')?.value || '999', 10);
 
@@ -152,9 +151,9 @@ function applyFilters(stocks) {
 
     return stocks.filter(s => {
         if (hideDone && s.is_done) return false;
-        if (earlyOnly && s.phase !== '初動') return false;
+        if (s.price_vs_start != null && s.price_vs_start > 20) return false;
         if (!allowedPhases.has(s.phase || '初動')) return false;
-        if (s.signal_days > maxDays) return false;
+        if ((s.signal_days || 0) > maxDays) return false;
         return true;
     });
 }
@@ -166,7 +165,7 @@ function renderTable() {
 
     const tbody = document.getElementById('signalBody');
     if (!stocks.length) {
-        tbody.innerHTML = '<tr><td colspan="17" class="empty-msg">該当銘柄なし</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="18" class="empty-msg">該当銘柄なし</td></tr>';
         return;
     }
 
@@ -183,9 +182,11 @@ function renderTable() {
         const epsG = s.eps_growth != null ? `${s.eps_growth >= 0 ? '+' : ''}${s.eps_growth}%` : '-';
         const devCls = s.ma25_dev >= 0 ? 'chg-pos' : 'chg-neg';
 
+        const dsd = s.days_since_detected ?? 0;
+        const isNew = dsd <= 3;
         const typeBadge = s.is_accel ? '<span class="badge-accel">加速</span>'
             : s.is_ultra_early ? '<span class="badge-ultra-early">超初動</span>'
-            : isNewStock(s) ? '<span class="badge-new">NEW</span>' : '';
+            : isNew ? '<span class="badge-new">NEW</span>' : '';
 
         const phaseCls = s.phase === '過熱' ? 'phase-hot'
             : s.phase === '加速中' ? 'phase-accel' : 'phase-early';
@@ -193,8 +194,10 @@ function renderTable() {
         const doneBadge = s.is_done ? ' <span class="badge-done">済</span>' : '';
 
         const riseStr = s.price_vs_start != null
-            ? `<span class="${s.price_vs_start > 15 ? 'chg-neg' : s.price_vs_start > 0 ? 'chg-pos' : ''}">${s.price_vs_start >= 0 ? '+' : ''}${s.price_vs_start}%</span>`
+            ? `<span class="${s.price_vs_start > 20 ? 'chg-neg' : s.price_vs_start > 0 ? 'chg-pos' : ''}">${s.price_vs_start >= 0 ? '+' : ''}${s.price_vs_start}%</span>`
             : '-';
+
+        const dsdStr = `${dsd}日${isNew ? ' <span class="badge-new">NEW</span>' : ''}`;
 
         const chart = (s.chart_dates && s.chart_dates.length > 5)
             ? buildSignalChart(s.chart_dates, s.chart_prices, s.chart_volumes, s.signal_indices || [])
@@ -204,7 +207,7 @@ function renderTable() {
 
         html += `<tr class="${rowCls}">
             <td>${phaseBadge}${doneBadge}</td>
-            <td>${esc(s.first_detected || '')}</td>
+            <td class="num">${dsdStr}</td>
             <td><a href="https://kabutan.jp/stock/?code=${esc(code4)}" target="_blank" class="stock-link">${esc(code4)}</a> ${typeBadge}</td>
             <td class="name-cell" title="${esc(s.name || '')}">${esc(s.name || '')}</td>
             <td class="sector-cell">${esc(s.sector || '')}</td>
@@ -227,10 +230,7 @@ function renderTable() {
     updateSortHeaders();
 }
 
-function isNewStock(s) {
-    if (!signalData || !signalData.new_5d) return false;
-    return signalData.new_5d.some(n => n.code_full === s.code_full);
-}
+// NEW badge is now based on days_since_detected <= 3 (computed in renderTable)
 
 function sortStocks(stocks, key, asc) {
     return [...stocks].sort((a, b) => {

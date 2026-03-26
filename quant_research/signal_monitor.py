@@ -449,9 +449,15 @@ def get_signal_stocks(data_dir: Optional[str] = None, force: bool = False) -> di
                 price_vs_start = round((cur_px - start_px) / start_px * 100, 1)
             else:
                 price_vs_start = None
-            is_done = price_vs_start is not None and price_vs_start > 15
+            is_done = price_vs_start is not None and price_vs_start > 20
 
             sig_days = signal_streak_map.get(code, 0)
+
+            # Days since first detection
+            if fs and pd.notna(fs):
+                days_since = (pd.Timestamp(latest_date) - pd.Timestamp(fs)).days
+            else:
+                days_since = 0
 
             records.append({
                 'code': code[:4] if len(code) > 4 else code,
@@ -475,6 +481,7 @@ def get_signal_stocks(data_dir: Optional[str] = None, force: bool = False) -> di
                 'vb_start_date': vb_start_date_map.get(code),
                 'is_done': is_done,
                 'signal_days': sig_days,
+                'days_since_detected': days_since,
                 'chart_dates': chart_dates,
                 'chart_prices': [round(p, 1) if pd.notna(p) else 0 for p in chart_prices],
                 'chart_volumes': [int(v) if pd.notna(v) else 0 for v in chart_volumes],
