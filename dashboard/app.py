@@ -791,6 +791,62 @@ def signals_scheduled_refresh():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/signals/optimal-conditions')
+def signals_optimal_conditions():
+    """深層探索で発見された最適売買条件を返す"""
+    try:
+        import json as _json
+        data_dir = os.path.join(_base, '..', 'quant_research', 'data')
+        results_path = os.path.join(data_dir, 'deep_strategy_results.json')
+        pkl_path = os.path.join(data_dir, '_results_deep_strategy.pkl')
+
+        for fname in ['deep_strategy_results.json', '_results_deep_strategy.pkl']:
+            local = os.path.join(data_dir, fname)
+            if not os.path.exists(local):
+                try:
+                    from google.cloud import storage
+                    client = storage.Client()
+                    bucket = client.bucket('pts-ranking-data')
+                    blob = bucket.blob(f'quant_data/{fname}')
+                    if blob.exists():
+                        os.makedirs(data_dir, exist_ok=True)
+                        blob.download_to_filename(local)
+                except Exception:
+                    pass
+
+        if not os.path.exists(results_path):
+            return jsonify({'success': False, 'error': 'No strategy results found'})
+        with open(results_path) as f:
+            data = _json.load(f)
+
+        import pickle
+        pkl_path = os.path.join(_base, '..', 'quant_research', 'data', '_results_deep_strategy.pkl')
+        high_n_strats = []
+        if os.path.exists(pkl_path):
+            with open(pkl_path, 'rb') as f:
+                all_strats = pickle.load(f)
+            for min_n, label in [(50, 'reliable'), (30, 'moderate'), (10, 'selective')]:
+                bucket = [s for s in all_strats if s['test']['n'] >= min_n]
+                bucket.sort(key=lambda x: (x['test']['wr'], x['test']['pf']), reverse=True)
+                for s in bucket[:5]:
+                    s_copy = dict(s)
+                    s_copy['reliability'] = label
+                    high_n_strats.append(s_copy)
+
+        return jsonify({
+            'success': True,
+            'summary': data.get('summary', {}),
+            'train_end': data.get('train_end', ''),
+            'wr90_plus': data.get('wr90_plus', [])[:10],
+            'wr80_90': data.get('wr80_90', [])[:10],
+            'high_n_strategies': high_n_strats[:15],
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
+
 # ========== クオンツ分析 ==========
 
 # .env ファイルを読み込み

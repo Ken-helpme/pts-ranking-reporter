@@ -9,6 +9,7 @@ let sortAsc = true;
 
 document.addEventListener('DOMContentLoaded', () => {
     loadSignals();
+    loadOptimalConditions();
 });
 
 async function loadSignals() {
@@ -402,6 +403,119 @@ function buildMonthLabelsLocal(dates, n, xOf, labelY) {
         }
     });
     return labels;
+}
+
+// ---------------------------------------------------------------------------
+// Optimal Conditions
+// ---------------------------------------------------------------------------
+
+async function loadOptimalConditions() {
+    try {
+        const res = await fetch('/api/signals/optimal-conditions');
+        const data = await res.json();
+        if (!data.success) return;
+        renderOptimalConditions(data);
+    } catch (e) {
+        // silently skip
+    }
+}
+
+function renderOptimalConditions(data) {
+    const section = document.getElementById('optimalSection');
+    if (!section) return;
+
+    const summary = data.summary || {};
+    const total = (summary.wr90 || 0) + (summary.wr80_90 || 0) + (summary.wr70_80 || 0) + (summary.wr60_70 || 0);
+    if (total === 0) return;
+
+    section.style.display = 'block';
+
+    const sumEl = document.getElementById('optimalSummary');
+    sumEl.innerHTML = `
+        <div class="optimal-stat"><span class="stat-label">90%+:</span><span class="stat-value wr90">${summary.wr90 || 0}</span></div>
+        <div class="optimal-stat"><span class="stat-label">80-90%:</span><span class="stat-value wr80">${summary.wr80_90 || 0}</span></div>
+        <div class="optimal-stat"><span class="stat-label">70-80%:</span><span class="stat-value wr70">${summary.wr70_80 || 0}</span></div>
+        <div class="optimal-stat"><span class="stat-label">60-70%:</span><span class="stat-value">${summary.wr60_70 || 0}</span></div>
+        <div class="optimal-stat"><span class="stat-label">合計:</span><span class="stat-value">${total.toLocaleString()}</span></div>
+        <div class="optimal-stat"><span class="stat-label">訓練期間:</span><span class="stat-value">~ ${data.train_end || '?'}</span></div>
+    `;
+
+    const cards = document.getElementById('optimalCards');
+    const strats = data.high_n_strategies || [];
+    if (strats.length === 0) {
+        cards.innerHTML = '<p style="color:#94a3b8;font-size:13px;">表示可能な戦略がありません</p>';
+        return;
+    }
+
+    const LABELS = { reliable: 'N≥50 高信頼', moderate: 'N≥30 中信頼', selective: 'N≥10 選択的' };
+    const seen = new Set();
+    let html = '';
+    for (const s of strats) {
+        const te = s.test || {};
+        const tr = s.train || {};
+        const p = s.params || {};
+        const key = `${te.wr}-${te.n}-${p.hd}-${p.tp}-${p.sl}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        const wr = (te.wr * 100).toFixed(1);
+        const wrCls = te.wr >= 0.80 ? 'wr-high' : te.wr >= 0.70 ? 'wr-mid' : 'wr-low';
+        const rel = s.reliability || 'selective';
+        const relLabel = LABELS[rel] || rel;
+
+        const condParts = [];
+        if (p.base) condParts.push(formatConditionJP(p.base));
+        if (p.extra && p.extra.length > 0) condParts.push(formatConditionJP(p.extra.join(' & ')));
+
+        const exitParts = [];
+        exitParts.push(`保有 ${p.hd}日`);
+        if (p.tp != null) exitParts.push(`利確 +${(p.tp * 100).toFixed(0)}%`);
+        if (p.sl != null) exitParts.push(`損切 ${(p.sl * 100).toFixed(0)}%`);
+
+        html += `<div class="opt-card reliability-${rel}">
+            <div class="opt-card-header">
+                <span class="opt-card-wr ${wrCls}">WR ${wr}%</span>
+                <span class="opt-card-badge ${rel}">${esc(relLabel)}</span>
+            </div>
+            <div class="opt-card-metrics">
+                <div class="opt-metric"><div class="opt-metric-label">テスト取引</div><div class="opt-metric-value">${te.n || '-'}</div></div>
+                <div class="opt-metric"><div class="opt-metric-label">PF</div><div class="opt-metric-value">${te.pf || '-'}</div></div>
+                <div class="opt-metric"><div class="opt-metric-label">平均利益</div><div class="opt-metric-value">${te.avg != null ? (te.avg * 100).toFixed(2) + '%' : '-'}</div></div>
+                <div class="opt-metric"><div class="opt-metric-label">訓練WR</div><div class="opt-metric-value">${tr.wr != null ? (tr.wr * 100).toFixed(1) + '%' : '-'}</div></div>
+            </div>
+            <div class="opt-card-conditions">
+                <span class="cond-label">条件:</span>${esc(condParts.join(' + '))}
+                <div class="cond-exit"><span class="cond-label">出口:</span>${esc(exitParts.join(' / '))}</div>
+            </div>
+        </div>`;
+    }
+    cards.innerHTML = html;
+}
+
+function formatConditionJP(condStr) {
+    if (!condStr) return '';
+    return condStr
+        .replace(/vb>=/g, 'VB倍率≥').replace(/vb<=/g, 'VB倍率≤')
+        .replace(/rsi>=/g, 'RSI≥').replace(/rsi<=/g, 'RSI≤')
+        .replace(/ma>=/g, 'MA25乖離≥').replace(/ma<=/g, 'MA25乖離≤')
+        .replace(/eps>=/g, 'EPS成長≥').replace(/og>=/g, '営業利益成長≥')
+        .replace(/mc>=/g, '時価総額≥').replace(/mc<=/g, '時価総額≤')
+        .replace(/per<=/g, 'PER≤').replace(/roe>=/g, 'ROE≥')
+        .replace(/atr<=/g, 'ATR≤').replace(/vr5>=/g, 'VR5d≥')
+        .replace(/m5d<=/g, 'MA5乖離≤').replace(/vz>=/g, 'VolZ≥')
+        .replace(/tr>=/g, '回転率≥')
+        .replace(/uptrend/g, '上昇トレンド').replace(/brk50/g, '50日ブレイク')
+        .replace(/ma25>75/g, 'MA25>MA75').replace(/ma5>25/g, 'MA5>MA25')
+        .replace(/macd>0/g, 'MACD正').replace(/mom5>0/g, 'モメンタム正')
+        .replace(/n52w/g, '52週高値付近')
+        .replace(/ & /g, ' / ');
+}
+
+function toggleOptimal() {
+    const body = document.getElementById('optimalBody');
+    const toggle = document.getElementById('optimalToggle');
+    body.classList.toggle('collapsed');
+    toggle.classList.toggle('collapsed');
 }
 
 // ---------------------------------------------------------------------------
