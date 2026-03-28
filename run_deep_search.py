@@ -1,38 +1,44 @@
 #!/usr/bin/env python3
 """
-Deep Strategy Search v6: Target 80%+ Win Rate
+Deep Strategy Search v7: Long-term holding (3mo / 6mo)
 Memory-safe: store only filter labels, recompute masks on demand.
+40% train / 60% test split to ensure enough forward return data.
 """
-import sys, logging, time, json, pickle
+import sys, logging, time, json, pickle, gc
 import numpy as np
 import pandas as pd
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s",
                     datefmt="%H:%M:%S", stream=sys.stderr)
-log = logging.getLogger("v6")
+log = logging.getLogger("v7")
 T0 = time.time()
+
+HOLD_PERIODS = [60, 120]  # 3 months, 6 months
 
 log.info("Loading...")
 df = pd.read_pickle("quant_research/data/_intermediate_df_features.pkl")
 N = len(df)
 
-for hd in [60, 120, 250]:
+for hd in HOLD_PERIODS:
     c = f"fwd_{hd}d_return"
     if c not in df.columns:
         df[c] = df.groupby("Code")["Close"].transform(lambda x: x.shift(-hd) / x - 1)
 
 dates = sorted(df["Date"].unique())
-split = pd.Timestamp(dates[int(len(dates) * 0.7)])
+split = pd.Timestamp(dates[int(len(dates) * 0.4)])
 IS_TR = (df["Date"] <= split).values
 IS_TE = (df["Date"] > split).values
-log.info(f"N={N:,} Tr={IS_TR.sum():,} Te={IS_TE.sum():,}")
+log.info(f"N={N:,} Tr={IS_TR.sum():,} Te={IS_TE.sum():,} split={split.date()}")
 
 RET = {}
-for hd in [60, 120, 250]:
+for hd in HOLD_PERIODS:
     v = df[f"fwd_{hd}d_return"].values
     RET[hd] = v
     RET[f"{hd}v"] = ~np.isnan(v)
     RET[f"{hd}p"] = np.where(np.isnan(v), False, v > 0)
+    tr_n = int((IS_TR & RET[f"{hd}v"]).sum())
+    te_n = int((IS_TE & RET[f"{hd}v"]).sum())
+    log.info(f"  {hd}d return: train valid={tr_n:,}, test valid={te_n:,}")
 
 # ── build all masks (stored once, shared, never copied) ──────────────────
 log.info("Building masks...")
@@ -185,7 +191,7 @@ for vbm in VBM:
                                     if ep: keys.append(f"eps>={ep}")
                                     keys += [f"mc>={mcm}", f"mc<={mcx}"]
 
-                                    for hd in [60, 120, 250]:
+                                    for hd in HOLD_PERIODS:
                                         r = wr_fast(mask, hd)
                                         if r and r[1] >= 0.64 and r[3] >= 0.54:
                                             p1.append((tuple(keys), hd,
@@ -291,7 +297,7 @@ for ci, (bk, ek, _) in enumerate(uc):
     all_keys = list(bk) + list(ek)
     mask = build_mask(all_keys)
 
-    for hd in [60, 120, 250]:
+    for hd in HOLD_PERIODS:
         for tp in TPS:
             for sl in SLS:
                 r = full_eval(mask, hd, tp, sl)
