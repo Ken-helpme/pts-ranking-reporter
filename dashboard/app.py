@@ -826,14 +826,17 @@ def signals_optimal_conditions():
                 all_strats = pickle.load(f)
 
             seen_bases = set()
-            for min_n, label, limit in [(50, 'reliable', 3), (30, 'moderate', 3), (10, 'selective', 4)]:
-                bucket = [s for s in all_strats if s['test']['n'] >= min_n]
+            for min_n, label, limit in [(50, 'reliable', 4), (30, 'moderate', 3), (10, 'selective', 3)]:
+                bucket = [s for s in all_strats
+                          if s['test']['n'] >= min_n
+                          and (label != 'moderate' or s['test']['n'] < 50)
+                          and (label != 'selective' or s['test']['n'] < 30)]
                 bucket.sort(key=lambda x: (x['test']['wr'], x['test']['pf']), reverse=True)
                 added = 0
                 for s in bucket:
                     base_key = s.get('params', {}).get('base', '')
                     extra_key = str(s.get('params', {}).get('extra', []))
-                    dedup_key = f"{base_key}|{extra_key}|{label}"
+                    dedup_key = f"{base_key}|{extra_key}"
                     if dedup_key in seen_bases:
                         continue
                     seen_bases.add(dedup_key)
