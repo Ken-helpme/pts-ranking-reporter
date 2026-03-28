@@ -450,6 +450,9 @@ function renderOptimalConditions(data) {
     const LABELS = { reliable: 'N≥50 高信頼', moderate: 'N≥30 中信頼', selective: 'N≥10 選択的' };
     const seen = new Set();
     let html = '';
+    let cardIdx = 0;
+    window._optStrategies = strats;
+
     for (const s of strats) {
         const te = s.test || {};
         const tr = s.train || {};
@@ -472,7 +475,10 @@ function renderOptimalConditions(data) {
         if (p.tp != null) exitParts.push(`利確 +${(p.tp * 100).toFixed(0)}%`);
         if (p.sl != null) exitParts.push(`損切 ${(p.sl * 100).toFixed(0)}%`);
 
-        html += `<div class="opt-card reliability-${rel}">
+        const rawCond = (p.base || '') + (p.extra && p.extra.length ? ' & ' + p.extra.join(' & ') : '');
+        const ci = cardIdx++;
+
+        html += `<div class="opt-card reliability-${rel}" onclick="showMatchingStocks(${ci}, this)" data-cond="${esc(rawCond)}" style="cursor:pointer;">
             <div class="opt-card-header">
                 <span class="opt-card-wr ${wrCls}">WR ${wr}%</span>
                 <span class="opt-card-badge ${rel}">${esc(relLabel)}</span>
@@ -487,9 +493,99 @@ function renderOptimalConditions(data) {
                 <span class="cond-label">条件:</span>${esc(condParts.join(' + '))}
                 <div class="cond-exit"><span class="cond-label">出口:</span>${esc(exitParts.join(' / '))}</div>
             </div>
+            <div class="opt-match-hint">クリックで該当銘柄を表示</div>
+            <div class="opt-match-panel" id="matchPanel${ci}" style="display:none;"></div>
         </div>`;
     }
     cards.innerHTML = html;
+}
+
+function showMatchingStocks(idx, cardEl) {
+    const panel = document.getElementById('matchPanel' + idx);
+    if (!panel) return;
+    if (panel.style.display !== 'none') {
+        panel.style.display = 'none';
+        return;
+    }
+
+    const condStr = cardEl.getAttribute('data-cond');
+    if (!condStr || !signalData) {
+        panel.innerHTML = '<div class="match-empty">シグナルデータが未読み込みです</div>';
+        panel.style.display = 'block';
+        return;
+    }
+
+    const filters = parseConditions(condStr);
+    const allStocks = signalData.all_signals || [];
+    const matched = allStocks.filter(s => matchesConditions(s, filters));
+
+    if (matched.length === 0) {
+        panel.innerHTML = '<div class="match-empty">現在この条件に該当する銘柄はありません</div>';
+    } else {
+        let rows = '';
+        for (const s of matched) {
+            const code4 = (s.code || '').substring(0, 4);
+            const mcStr = s.market_cap ? fmtOku(s.market_cap) : '-';
+            rows += `<tr>
+                <td><a href="https://kabutan.jp/stock/?code=${esc(code4)}" target="_blank" class="stock-link">${esc(code4)}</a></td>
+                <td>${esc((s.name || '').substring(0, 16))}</td>
+                <td class="num">¥${fmtNum(s.close)}</td>
+                <td class="num">${s.vol_base_ratio}x</td>
+                <td class="num">${s.rsi}</td>
+                <td class="num">${s.ma25_dev >= 0 ? '+' : ''}${s.ma25_dev}%</td>
+                <td class="num">${s.eps_growth != null ? s.eps_growth + '%' : '-'}</td>
+                <td class="num">${mcStr}</td>
+            </tr>`;
+        }
+        panel.innerHTML = `<div class="match-header">該当銘柄: ${matched.length}件</div>
+            <table class="match-table">
+                <thead><tr><th>コード</th><th>銘柄名</th><th>株価</th><th>VB</th><th>RSI</th><th>MA25乖離</th><th>EPS</th><th>時価総額</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>`;
+    }
+    panel.style.display = 'block';
+}
+
+function parseConditions(condStr) {
+    const parts = condStr.split(/\s*&\s*/);
+    const filters = [];
+    for (const part of parts) {
+        const m = part.match(/^(\w+)(>=|<=|>|<)([\d.e+-]+)$/);
+        if (!m) continue;
+        filters.push({ field: m[1], op: m[2], val: parseFloat(m[3]) });
+    }
+    return filters;
+}
+
+function matchesConditions(stock, filters) {
+    for (const f of filters) {
+        let sv = getStockValue(stock, f.field);
+        if (sv == null) return false;
+        if (f.op === '>=' && sv < f.val) return false;
+        if (f.op === '<=' && sv > f.val) return false;
+        if (f.op === '>' && sv <= f.val) return false;
+        if (f.op === '<' && sv >= f.val) return false;
+    }
+    return true;
+}
+
+function getStockValue(stock, field) {
+    if (field === 'vb') return stock.vol_base_ratio;
+    if (field === 'rsi') return stock.rsi;
+    if (field === 'ma') return stock.ma25_dev != null ? stock.ma25_dev / 100 : null;
+    if (field === 'eps') return stock.eps_growth != null ? stock.eps_growth / 100 : null;
+    if (field === 'og') return stock.op_growth != null ? stock.op_growth / 100 : null;
+    if (field === 'mc') return stock.market_cap;
+    if (field === 'per') return stock.per;
+    if (field === 'roe') return stock.roe;
+    return null;
+}
+
+function fmtOku(v) {
+    if (v == null) return '-';
+    if (v >= 1e12) return (v / 1e12).toFixed(1) + '兆';
+    if (v >= 1e8) return (v / 1e8).toFixed(0) + '億';
+    return Math.round(v).toLocaleString();
 }
 
 function formatConditionJP(condStr) {

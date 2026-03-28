@@ -917,6 +917,70 @@
     font-weight: 500;
 }
 
+/* Matching stocks panel */
+.opt-match-hint {
+    font-size: 10px;
+    color: #94a3b8;
+    text-align: center;
+    margin-top: 8px;
+    transition: color 0.15s;
+}
+
+.opt-card:hover .opt-match-hint {
+    color: #2563eb;
+}
+
+.opt-match-panel {
+    margin-top: 10px;
+    border-top: 1px solid #e2e8f0;
+    padding-top: 10px;
+}
+
+.match-header {
+    font-size: 12px;
+    font-weight: 700;
+    color: #1e293b;
+    margin-bottom: 6px;
+}
+
+.match-empty {
+    font-size: 12px;
+    color: #94a3b8;
+    text-align: center;
+    padding: 8px 0;
+}
+
+.match-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+}
+
+.match-table th {
+    background: #f8fafc;
+    padding: 4px 6px;
+    text-align: left;
+    font-weight: 600;
+    color: #64748b;
+    font-size: 10px;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.match-table td {
+    padding: 4px 6px;
+    border-bottom: 1px solid #f1f5f9;
+    white-space: nowrap;
+}
+
+.match-table td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.match-table .stock-link {
+    font-size: 11px;
+}
+
 /* Responsive */
 @media (max-width: 1100px) {
     .summary-grid {

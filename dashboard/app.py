@@ -831,7 +831,11 @@ def signals_optimal_conditions():
                           if s['test']['n'] >= min_n
                           and (label != 'moderate' or s['test']['n'] < 50)
                           and (label != 'selective' or s['test']['n'] < 30)]
-                bucket.sort(key=lambda x: (x['test']['wr'], x['test']['pf']), reverse=True)
+                bucket.sort(key=lambda x: (
+                    x['test']['wr'],
+                    1 if x['params'].get('hd', 0) >= 10 else 0,
+                    x['test']['pf'],
+                ), reverse=True)
                 added = 0
                 for s in bucket:
                     base_key = s.get('params', {}).get('base', '')

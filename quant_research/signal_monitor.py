@@ -472,6 +472,8 @@ def get_signal_stocks(data_dir: Optional[str] = None, force: bool = False) -> di
                 'ma25_dev': round(float(r['ma25_dev']), 1) if pd.notna(r['ma25_dev']) else 0,
                 'op_growth': round(float(op_map.get(code, float('nan'))), 0) if pd.notna(op_map.get(code)) else None,
                 'eps_growth': round(float(eps_map.get(code, float('nan'))), 0) if pd.notna(eps_map.get(code)) else None,
+                'market_cap': round(float(r['market_cap'])) if pd.notna(r.get('market_cap')) else None,
+                'per': round(float(r['per']), 1) if pd.notna(r.get('per')) else None,
                 'trend': trend,
                 'first_detected': fs_str,
                 'detection_dates': det_str,
