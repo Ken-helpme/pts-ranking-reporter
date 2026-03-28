@@ -827,11 +827,18 @@ def signals_optimal_conditions():
 
             seen_entry = set()
             seen_outcome = set()
-            for min_n, label, limit in [(50, 'reliable', 5), (30, 'moderate', 3), (10, 'selective', 3)]:
+            tiers = [
+                (500, 'reliable',  5),
+                (200, 'moderate',  4),
+                (100, 'mid',       3),
+                (30,  'selective', 3),
+            ]
+            for min_n, label, limit in tiers:
                 bucket = [s for s in all_strats
                           if s['test']['n'] >= min_n
-                          and (label != 'moderate' or s['test']['n'] < 50)
-                          and (label != 'selective' or s['test']['n'] < 30)]
+                          and (label != 'moderate' or s['test']['n'] < 500)
+                          and (label != 'mid' or s['test']['n'] < 200)
+                          and (label != 'selective' or s['test']['n'] < 100)]
                 bucket.sort(key=lambda x: (
                     x['test']['wr'],
                     1 if x['params'].get('hd', 0) >= 60 else 0,
