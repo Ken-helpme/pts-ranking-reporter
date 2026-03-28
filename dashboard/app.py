@@ -825,25 +825,28 @@ def signals_optimal_conditions():
             with open(pkl_path, 'rb') as f:
                 all_strats = pickle.load(f)
 
-            seen_bases = set()
-            for min_n, label, limit in [(50, 'reliable', 4), (30, 'moderate', 3), (10, 'selective', 3)]:
+            seen_entry = set()
+            seen_outcome = set()
+            for min_n, label, limit in [(50, 'reliable', 5), (30, 'moderate', 3), (10, 'selective', 3)]:
                 bucket = [s for s in all_strats
                           if s['test']['n'] >= min_n
                           and (label != 'moderate' or s['test']['n'] < 50)
                           and (label != 'selective' or s['test']['n'] < 30)]
                 bucket.sort(key=lambda x: (
                     x['test']['wr'],
-                    1 if x['params'].get('hd', 0) >= 10 else 0,
+                    1 if x['params'].get('hd', 0) >= 60 else 0,
                     x['test']['pf'],
                 ), reverse=True)
                 added = 0
                 for s in bucket:
-                    base_key = s.get('params', {}).get('base', '')
-                    extra_key = str(s.get('params', {}).get('extra', []))
-                    dedup_key = f"{base_key}|{extra_key}"
-                    if dedup_key in seen_bases:
+                    te = s['test']
+                    p = s['params']
+                    entry_key = (p.get('base', ''), p.get('hd'))
+                    outcome_key = (te['n'], round(te['wr'], 3), p.get('hd'))
+                    if entry_key in seen_entry or outcome_key in seen_outcome:
                         continue
-                    seen_bases.add(dedup_key)
+                    seen_entry.add(entry_key)
+                    seen_outcome.add(outcome_key)
                     s_copy = dict(s)
                     s_copy['reliability'] = label
                     high_n_strats.append(s_copy)
