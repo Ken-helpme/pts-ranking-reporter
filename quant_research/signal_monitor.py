@@ -112,50 +112,48 @@ def _compute_growing_codes(fins: pd.DataFrame, min_op_growth: float = 10.0):
 
 def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
     """Add vol-base / slope / deviation columns if missing."""
+    g = df.groupby('CodeStr')
+
+    # Legacy mean-based ratios (kept for backward compat / display)
     if 'vol_avg_20' not in df.columns:
-        df['vol_avg_20'] = df.groupby('CodeStr')['Volume'].transform(
+        df['vol_avg_20'] = g['Volume'].transform(
             lambda x: x.rolling(20, min_periods=15).mean())
     if 'vol_avg_120' not in df.columns:
-        df['vol_avg_120'] = df.groupby('CodeStr')['Volume'].transform(
+        df['vol_avg_120'] = g['Volume'].transform(
             lambda x: x.rolling(120, min_periods=80).mean())
     if 'vol_base_ratio' not in df.columns:
         df['vol_base_ratio'] = df['vol_avg_20'] / df['vol_avg_120']
 
-    # Lagged baseline: 120d average shifted by 5 days (excludes recent surge)
-    df['vol_avg_120_lagged'] = df.groupby('CodeStr')['Volume'].transform(
-        lambda x: x.shift(5).rolling(120, min_periods=80).mean())
-    # Recent 5-day average vs lagged 120d baseline (fallback to non-lagged when NaN)
-    df['vol_avg_5'] = df.groupby('CodeStr')['Volume'].transform(
-        lambda x: x.rolling(5, min_periods=3).mean())
-    lagged_base = df['vol_avg_120_lagged'].fillna(df['vol_avg_120'])
-    df['vol_base_ratio_lagged'] = df['vol_avg_5'] / lagged_base
+    # ── Baseline-shift detection (median-based, excludes today) ──────────
+    # Shifted volume series: exclude today from all calculations
+    vol_shifted = g['Volume'].shift(1)
 
-    # Recent 3-day average (for ultra-early gradual increase detection)
-    df['vol_avg_3'] = df.groupby('CodeStr')['Volume'].transform(
-        lambda x: x.rolling(3, min_periods=2).mean())
-    df['vol_3d_vs_120d'] = df['vol_avg_3'] / df['vol_avg_120']
+    # Median of the most recent 20 trading days (excluding today)
+    df['vol_med_20'] = vol_shifted.groupby(df['CodeStr']).transform(
+        lambda x: x.rolling(20, min_periods=15).median())
 
-    # Short-term above-baseline count: 5 days out of 5 above 120d avg
-    df['_above_120'] = (df['Volume'] > df['vol_avg_120']).astype(float)
-    df.loc[df['vol_avg_120'].isna() | (df['vol_avg_120'] <= 0), '_above_120'] = np.nan
-    df['vol_above_count_5d'] = df.groupby('CodeStr')['_above_120'].transform(
-        lambda x: x.rolling(5, min_periods=3).sum())
-    df.drop(columns=['_above_120'], inplace=True)
+    # Median of the 60 days BEFORE the recent 20 (shift an extra 20)
+    vol_prev_block = g['Volume'].shift(21)
+    df['vol_med_60_prev'] = vol_prev_block.groupby(df['CodeStr']).transform(
+        lambda x: x.rolling(60, min_periods=40).median())
 
+    df['vol_baseline_shift'] = df['vol_med_20'] / df['vol_med_60_prev'].replace(0, np.nan)
+
+    # Count: how many of the last 20 days (excl today) exceed the prev-60d median
+    df['_above_med60'] = (vol_shifted > df['vol_med_60_prev']).astype(float)
+    df.loc[df['vol_med_60_prev'].isna() | (df['vol_med_60_prev'] <= 0), '_above_med60'] = np.nan
+    df['vol_above_baseline_count'] = df.groupby('CodeStr')['_above_med60'].transform(
+        lambda x: x.rolling(20, min_periods=15).sum())
+    df.drop(columns=['_above_med60'], inplace=True)
+
+    # ── Ultra-early baseline shift (5-day median window, excl today) ─────
+    df['vol_med_5'] = vol_shifted.groupby(df['CodeStr']).transform(
+        lambda x: x.rolling(5, min_periods=3).median())
+    df['vol_ultra_early_shift'] = df['vol_med_5'] / df['vol_med_60_prev'].replace(0, np.nan)
+
+    # Legacy vol_above_count_20d (used for display in the table)
     if 'vol_above_count_20d' not in df.columns:
-        def _count(group):
-            vol = group['Volume'].values
-            avg120 = group['vol_avg_120'].values
-            result = np.full(len(vol), np.nan)
-            for i in range(19, len(vol)):
-                window = vol[i - 19:i + 1]
-                baseline = avg120[i]
-                if np.isnan(baseline) or baseline <= 0:
-                    continue
-                result[i] = np.sum(window > baseline)
-            return pd.Series(result, index=group.index)
-        df['vol_above_count_20d'] = df.groupby('CodeStr').apply(
-            _count).reset_index(level=0, drop=True)
+        df['vol_above_count_20d'] = df['vol_above_baseline_count']
 
     if 'high_50d' not in df.columns:
         df['high_50d'] = df.groupby('CodeStr')['Close'].transform(
@@ -183,16 +181,7 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
         lambda x: x.pct_change().eq(0).rolling(5, min_periods=3).sum())
     df['price_frozen_5d'] = zero_ret_count >= 3
 
-    # Volume jump features
-    df['vol_vs_120d'] = df['Volume'] / df['vol_avg_120']
-    df['vol_jump'] = df['Volume'] / df.groupby('CodeStr')['Volume'].shift(1)
     df['daily_ret'] = df.groupby('CodeStr')['Close'].pct_change()
-
-    # Volume acceleration: 3 consecutive days of vol_jump >= 1.3 (前日比+30%)
-    df['_vj_ok'] = (df['vol_jump'].fillna(0) >= 1.3).astype(int)
-    df['vol_accel_3d'] = df.groupby('CodeStr')['_vj_ok'].transform(
-        lambda x: x.rolling(3, min_periods=3).min()).fillna(0)
-    df.drop(columns=['_vj_ok'], inplace=True)
 
     return df
 
@@ -203,13 +192,13 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def compute_signals(df: pd.DataFrame, etf_codes: set, growing_codes: set) -> pd.Series:
     """
-    Confirmed stealth accumulation.
-    Uses lagged 120d baseline (excludes recent 5 days from average)
-    and short-term above-count (5 days out of 5 >= 3) for faster detection.
+    Baseline-shift detection: the median volume level of the recent 20 days
+    is significantly higher than the median of the prior 60 days, with
+    sustained consistency (>=10 of 20 days above the old median).
     """
     return (
-        (df['vol_base_ratio_lagged'] >= 1.5) &
-        (df['vol_above_count_5d'] >= 3) &
+        (df['vol_baseline_shift'] >= 1.5) &
+        (df['vol_above_baseline_count'] >= 10) &
         (df['ma25_dev'].abs() <= 10) &
         (df['rsi'] <= 65) &
         (df['pct_from_50d_high'] >= -0.10) &
@@ -225,10 +214,12 @@ def compute_signals(df: pd.DataFrame, etf_codes: set, growing_codes: set) -> pd.
 def compute_ultra_early_signals(df: pd.DataFrame, etf_codes: set,
                                  growing_codes: set) -> pd.Series:
     """
-    Ultra-early volume detection (超初動シグナル).
-    Two paths: single-day spike OR gradual 3-day buildup.
+    Ultra-early baseline shift (超初動シグナル).
+    5-day median volume (excl today) vs prior 60-day median >= 1.8x.
+    Catches the very first week of a baseline shift.
     """
-    common = (
+    return (
+        (df['vol_ultra_early_shift'] >= 1.8) &
         (df['daily_ret'] >= -0.03) &
         (df['pct_from_50d_high'] >= -0.05) &
         (~df['price_frozen_5d']) &
@@ -237,22 +228,17 @@ def compute_ultra_early_signals(df: pd.DataFrame, etf_codes: set,
         (df['CodeStr'].isin(growing_codes)) &
         (~df['_signal'])
     )
-    # Path A: single-day spike vs 120d avg
-    spike = (df['vol_vs_120d'] >= 1.5)
-    # Path B: gradual 3-day buildup (じわじわ型)
-    gradual = (df['vol_3d_vs_120d'] >= 1.8)
-    return common & (spike | gradual)
 
 
 def compute_accel_signals(df: pd.DataFrame, etf_codes: set,
                           growing_codes: set) -> pd.Series:
     """
     Volume acceleration signal (出来高加速シグナル).
-    Fires when volume increases 30%+ day-over-day for 3 consecutive days.
-    Catches the 'run-up' before a multiplier threshold is reached.
+    Fires when the baseline shift ratio crosses 2.5x (strong sustained increase)
+    but the main signal didn't fire (e.g. price filters excluded it).
     """
     return (
-        (df['vol_accel_3d'] >= 1) &
+        (df['vol_baseline_shift'] >= 2.5) &
         (df['daily_ret'] >= -0.03) &
         (df['pct_from_50d_high'] >= -0.05) &
         (~df['price_frozen_5d']) &
@@ -433,8 +419,9 @@ def get_signal_stocks(data_dir: Optional[str] = None, force: bool = False) -> di
             fs = first_signal.get(code)
             fs_str = pd.Timestamp(fs).strftime('%Y-%m-%d') if pd.notna(fs) else ''
 
-            # Phase classification by VB ratio
-            vb = float(r['vol_base_ratio']) if pd.notna(r['vol_base_ratio']) else 0
+            # Phase classification by baseline shift ratio
+            vb = float(r['vol_baseline_shift']) if pd.notna(r.get('vol_baseline_shift')) else (
+                float(r['vol_base_ratio']) if pd.notna(r.get('vol_base_ratio')) else 0)
             if vb >= 3.5:
                 phase = '過熱'
             elif vb >= 2.0:

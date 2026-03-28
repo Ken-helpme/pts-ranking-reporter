@@ -47,7 +47,7 @@ PARAM_SPACE = {
     "holding_days": [3, 5, 10, 20, 60],
 }
 
-FORWARD_PERIODS = [3, 5, 10, 20, 60, 120]
+FORWARD_PERIODS = [3, 5, 10, 20, 60, 120, 250]
 
 # --- ファンダメンタルパラメータ ---
 FUNDAMENTAL_PARAMS = {

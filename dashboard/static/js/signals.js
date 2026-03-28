@@ -471,7 +471,7 @@ function renderOptimalConditions(data) {
         if (p.extra && p.extra.length > 0) condParts.push(formatConditionJP(p.extra.join(' & ')));
 
         const exitParts = [];
-        exitParts.push(`保有 ${p.hd}日`);
+        exitParts.push(`保有 ${fmtHoldingDays(p.hd)}`);
         if (p.tp != null) exitParts.push(`利確 +${(p.tp * 100).toFixed(0)}%`);
         if (p.sl != null) exitParts.push(`損切 ${(p.sl * 100).toFixed(0)}%`);
 
@@ -640,6 +640,13 @@ function esc(s) {
 function fmtNum(n) {
     if (n == null) return '-';
     return Number(n).toLocaleString('ja-JP');
+}
+
+function fmtHoldingDays(d) {
+    if (d >= 250) return '1年';
+    if (d >= 120) return '半年';
+    if (d >= 60) return '3ヶ月';
+    return d + '日';
 }
 
 function showError(msg) {
