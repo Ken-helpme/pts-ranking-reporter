@@ -820,26 +820,35 @@ def signals_optimal_conditions():
             data = _json.load(f)
 
         import pickle
-        pkl_path = os.path.join(_base, '..', 'quant_research', 'data', '_results_deep_strategy.pkl')
         high_n_strats = []
         if os.path.exists(pkl_path):
             with open(pkl_path, 'rb') as f:
                 all_strats = pickle.load(f)
-            for min_n, label in [(50, 'reliable'), (30, 'moderate'), (10, 'selective')]:
+
+            seen_bases = set()
+            for min_n, label, limit in [(50, 'reliable', 3), (30, 'moderate', 3), (10, 'selective', 4)]:
                 bucket = [s for s in all_strats if s['test']['n'] >= min_n]
                 bucket.sort(key=lambda x: (x['test']['wr'], x['test']['pf']), reverse=True)
-                for s in bucket[:5]:
+                added = 0
+                for s in bucket:
+                    base_key = s.get('params', {}).get('base', '')
+                    extra_key = str(s.get('params', {}).get('extra', []))
+                    dedup_key = f"{base_key}|{extra_key}|{label}"
+                    if dedup_key in seen_bases:
+                        continue
+                    seen_bases.add(dedup_key)
                     s_copy = dict(s)
                     s_copy['reliability'] = label
                     high_n_strats.append(s_copy)
+                    added += 1
+                    if added >= limit:
+                        break
 
         return jsonify({
             'success': True,
             'summary': data.get('summary', {}),
             'train_end': data.get('train_end', ''),
-            'wr90_plus': data.get('wr90_plus', [])[:10],
-            'wr80_90': data.get('wr80_90', [])[:10],
-            'high_n_strategies': high_n_strats[:15],
+            'high_n_strategies': high_n_strats[:10],
         })
     except Exception as e:
         import traceback

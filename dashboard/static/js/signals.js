@@ -454,7 +454,7 @@ function renderOptimalConditions(data) {
         const te = s.test || {};
         const tr = s.train || {};
         const p = s.params || {};
-        const key = `${te.wr}-${te.n}-${p.hd}-${p.tp}-${p.sl}`;
+        const key = `${p.base || ''}-${(p.extra||[]).join(',')}-${te.wr}-${p.hd}-${p.tp}-${p.sl}-${s.reliability}`;
         if (seen.has(key)) continue;
         seen.add(key);
 
@@ -494,13 +494,26 @@ function renderOptimalConditions(data) {
 
 function formatConditionJP(condStr) {
     if (!condStr) return '';
+
+    function fmtMcap(match, op, num) {
+        const v = parseFloat(num);
+        if (v >= 1e12) return '時価総額' + op + (v / 1e12).toFixed(0) + '兆';
+        if (v >= 1e8) return '時価総額' + op + (v / 1e8).toFixed(0) + '億';
+        return '時価総額' + op + num;
+    }
+
+    function fmtPct(match, label, op, num) {
+        const v = parseFloat(num);
+        return label + op + (v * 100).toFixed(0) + '%';
+    }
+
     return condStr
-        .replace(/vb>=/g, 'VB倍率≥').replace(/vb<=/g, 'VB倍率≤')
+        .replace(/mc(>=|<=)([\d.e+]+)/g, fmtMcap)
+        .replace(/(eps|og|roe)(>=|<=)([\d.]+)/g, fmtPct)
+        .replace(/(ma)(>=|<=)([\d.]+)/g, fmtPct)
+        .replace(/vb>=/g, 'VB≥').replace(/vb<=/g, 'VB≤')
         .replace(/rsi>=/g, 'RSI≥').replace(/rsi<=/g, 'RSI≤')
-        .replace(/ma>=/g, 'MA25乖離≥').replace(/ma<=/g, 'MA25乖離≤')
-        .replace(/eps>=/g, 'EPS成長≥').replace(/og>=/g, '営業利益成長≥')
-        .replace(/mc>=/g, '時価総額≥').replace(/mc<=/g, '時価総額≤')
-        .replace(/per<=/g, 'PER≤').replace(/roe>=/g, 'ROE≥')
+        .replace(/per<=/g, 'PER≤')
         .replace(/atr<=/g, 'ATR≤').replace(/vr5>=/g, 'VR5d≥')
         .replace(/m5d<=/g, 'MA5乖離≤').replace(/vz>=/g, 'VolZ≥')
         .replace(/tr>=/g, '回転率≥')
