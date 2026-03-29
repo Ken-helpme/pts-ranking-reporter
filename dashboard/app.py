@@ -800,72 +800,30 @@ def signals_optimal_conditions():
         results_path = os.path.join(data_dir, 'deep_strategy_results.json')
         pkl_path = os.path.join(data_dir, '_results_deep_strategy.pkl')
 
-        for fname in ['deep_strategy_results.json', '_results_deep_strategy.pkl']:
-            local = os.path.join(data_dir, fname)
-            if not os.path.exists(local):
-                try:
-                    from google.cloud import storage
-                    client = storage.Client()
-                    bucket = client.bucket('pts-ranking-data')
-                    blob = bucket.blob(f'quant_data/{fname}')
-                    if blob.exists():
-                        os.makedirs(data_dir, exist_ok=True)
-                        blob.download_to_filename(local)
-                except Exception:
-                    pass
+        if not os.path.exists(results_path):
+            try:
+                from google.cloud import storage
+                client = storage.Client()
+                bucket = client.bucket('pts-ranking-data')
+                blob = bucket.blob('quant_data/deep_strategy_results.json')
+                if blob.exists():
+                    os.makedirs(data_dir, exist_ok=True)
+                    blob.download_to_filename(results_path)
+            except Exception:
+                pass
 
         if not os.path.exists(results_path):
             return jsonify({'success': False, 'error': 'No strategy results found'})
         with open(results_path) as f:
             data = _json.load(f)
 
-        import pickle
-        high_n_strats = []
-        if os.path.exists(pkl_path):
-            with open(pkl_path, 'rb') as f:
-                all_strats = pickle.load(f)
-
-            seen_entry = set()
-            seen_outcome = set()
-            tiers = [
-                (500, 'reliable',  5),
-                (200, 'moderate',  4),
-                (100, 'mid',       3),
-                (30,  'selective', 3),
-            ]
-            for min_n, label, limit in tiers:
-                bucket = [s for s in all_strats
-                          if s['test']['n'] >= min_n
-                          and (label != 'moderate' or s['test']['n'] < 500)
-                          and (label != 'mid' or s['test']['n'] < 200)
-                          and (label != 'selective' or s['test']['n'] < 100)]
-                bucket.sort(key=lambda x: (
-                    x['test']['wr'],
-                    1 if x['params'].get('hd', 0) >= 60 else 0,
-                    x['test']['pf'],
-                ), reverse=True)
-                added = 0
-                for s in bucket:
-                    te = s['test']
-                    p = s['params']
-                    entry_key = (p.get('base', ''), p.get('hd'))
-                    outcome_key = (te['n'], round(te['wr'], 3), p.get('hd'))
-                    if entry_key in seen_entry or outcome_key in seen_outcome:
-                        continue
-                    seen_entry.add(entry_key)
-                    seen_outcome.add(outcome_key)
-                    s_copy = dict(s)
-                    s_copy['reliability'] = label
-                    high_n_strats.append(s_copy)
-                    added += 1
-                    if added >= limit:
-                        break
+        high_n_strats = data.get('high_n_strategies', [])
 
         return jsonify({
             'success': True,
             'summary': data.get('summary', {}),
             'train_end': data.get('train_end', ''),
-            'high_n_strategies': high_n_strats[:10],
+            'high_n_strategies': high_n_strats[:15],
         })
     except Exception as e:
         import traceback
