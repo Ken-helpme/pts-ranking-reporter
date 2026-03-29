@@ -798,14 +798,18 @@ def signals_optimal_conditions():
         import json as _json
         data_dir = os.path.join(_base, '..', 'quant_research', 'data')
         results_path = os.path.join(data_dir, 'deep_strategy_results.json')
-        pkl_path = os.path.join(data_dir, '_results_deep_strategy.pkl')
 
-        if not os.path.exists(results_path):
+        import time as _time
+        need_dl = not os.path.exists(results_path)
+        if not need_dl:
+            age = _time.time() - os.path.getmtime(results_path)
+            need_dl = age > 3600
+        if need_dl:
             try:
                 from google.cloud import storage
                 client = storage.Client()
-                bucket = client.bucket('pts-ranking-data')
-                blob = bucket.blob('quant_data/deep_strategy_results.json')
+                bkt = client.bucket('pts-ranking-data')
+                blob = bkt.blob('quant_data/deep_strategy_results.json')
                 if blob.exists():
                     os.makedirs(data_dir, exist_ok=True)
                     blob.download_to_filename(results_path)
@@ -815,7 +819,9 @@ def signals_optimal_conditions():
         if not os.path.exists(results_path):
             return jsonify({'success': False, 'error': 'No strategy results found'})
         with open(results_path) as f:
-            data = _json.load(f)
+            raw = f.read().replace(': Infinity', ': null').replace(':Infinity', ':null')
+            raw = raw.replace(': NaN', ': null').replace(':NaN', ':null')
+            data = _json.loads(raw)
 
         high_n_strats = data.get('high_n_strategies', [])
 
