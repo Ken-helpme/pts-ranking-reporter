@@ -412,11 +412,12 @@ function buildMonthLabelsLocal(dates, n, xOf, labelY) {
 async function loadOptimalConditions() {
     try {
         const res = await fetch('/api/signals/optimal-conditions');
+        if (!res.ok) { console.error('optimal-conditions HTTP', res.status); return; }
         const data = await res.json();
-        if (!data.success) return;
+        if (!data.success) { console.warn('optimal-conditions not success', data); return; }
         renderOptimalConditions(data);
     } catch (e) {
-        // silently skip
+        console.error('loadOptimalConditions error:', e);
     }
 }
 
@@ -447,7 +448,12 @@ function renderOptimalConditions(data) {
         return;
     }
 
-    const LABELS = { reliable: 'N≥50 高信頼', moderate: 'N≥30 中信頼', selective: 'N≥10 選択的' };
+    const LABELS = {
+        reliable:  'N≥500 高信頼',
+        moderate:  'N≥200 中信頼',
+        mid:       'N≥100 準信頼',
+        selective: 'N≥30 選択的'
+    };
     const seen = new Set();
     let html = '';
     let cardIdx = 0;
@@ -472,11 +478,17 @@ function renderOptimalConditions(data) {
 
         const exitParts = [];
         exitParts.push(`保有 ${fmtHoldingDays(p.hd)}`);
-        if (p.tp != null) exitParts.push(`利確 +${(p.tp * 100).toFixed(0)}%`);
-        if (p.sl != null) exitParts.push(`損切 ${(p.sl * 100).toFixed(0)}%`);
+        if (p.tp != null) exitParts.push(`利確 +${(p.tp * 100).toFixed(1)}%`);
+        if (p.sl != null) exitParts.push(`損切 ${(p.sl * 100).toFixed(1)}%`);
 
         const rawCond = (p.base || '') + (p.extra && p.extra.length ? ' & ' + p.extra.join(' & ') : '');
         const ci = cardIdx++;
+
+        const fmtPF = (v) => {
+            if (v == null) return '-';
+            if (v > 9999) return '∞';
+            return v.toFixed(1);
+        };
 
         html += `<div class="opt-card reliability-${rel}" onclick="showMatchingStocks(${ci}, this)" data-cond="${esc(rawCond)}" style="cursor:pointer;">
             <div class="opt-card-header">
@@ -484,8 +496,8 @@ function renderOptimalConditions(data) {
                 <span class="opt-card-badge ${rel}">${esc(relLabel)}</span>
             </div>
             <div class="opt-card-metrics">
-                <div class="opt-metric"><div class="opt-metric-label">テスト取引</div><div class="opt-metric-value">${te.n || '-'}</div></div>
-                <div class="opt-metric"><div class="opt-metric-label">PF</div><div class="opt-metric-value">${te.pf || '-'}</div></div>
+                <div class="opt-metric"><div class="opt-metric-label">テスト取引</div><div class="opt-metric-value">${te.n != null ? te.n.toLocaleString() : '-'}</div></div>
+                <div class="opt-metric"><div class="opt-metric-label">PF</div><div class="opt-metric-value">${fmtPF(te.pf)}</div></div>
                 <div class="opt-metric"><div class="opt-metric-label">平均利益</div><div class="opt-metric-value">${te.avg != null ? (te.avg * 100).toFixed(2) + '%' : '-'}</div></div>
                 <div class="opt-metric"><div class="opt-metric-label">訓練WR</div><div class="opt-metric-value">${tr.wr != null ? (tr.wr * 100).toFixed(1) + '%' : '-'}</div></div>
             </div>
