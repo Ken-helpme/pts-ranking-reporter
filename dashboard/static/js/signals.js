@@ -426,8 +426,8 @@ function renderOptimalConditions(data) {
     if (!section) return;
 
     const summary = data.summary || {};
-    const total = summary.total || (summary.wr90 || 0) + (summary.wr80_90 || 0) + (summary.wr70_80 || 0) + (summary.wr60_70 || 0);
-    if (total === 0) return;
+    const total = summary.total || 0;
+    if (total === 0 && !(data.sections || []).length) return;
 
     section.style.display = 'block';
 
@@ -435,87 +435,117 @@ function renderOptimalConditions(data) {
     const bearPct = regime.bear_pct ? (regime.bear_pct * 100).toFixed(0) + '%' : '?';
     const sumEl = document.getElementById('optimalSummary');
     sumEl.innerHTML = `
-        <div class="optimal-stat"><span class="stat-label">両方75%+:</span><span class="stat-value wr90">${summary.both75plus || 0}</span></div>
-        <div class="optimal-stat"><span class="stat-label">両方70%+:</span><span class="stat-value wr80">${summary.both70plus || 0}</span></div>
-        <div class="optimal-stat"><span class="stat-label">両方65%+:</span><span class="stat-value wr70">${summary.both65plus || 0}</span></div>
-        <div class="optimal-stat"><span class="stat-label">両方60%+:</span><span class="stat-value">${summary.both60plus || 0}</span></div>
         <div class="optimal-stat"><span class="stat-label">合計:</span><span class="stat-value">${total}</span></div>
         <div class="optimal-stat"><span class="stat-label">データ:</span><span class="stat-value">${data.data_range || '?'}</span></div>
         <div class="optimal-stat"><span class="stat-label">下落相場:</span><span class="stat-value">${bearPct}</span></div>
+        <div class="optimal-stat"><span class="stat-label">テスト:</span><span class="stat-value">${data.train_end || '?'}〜</span></div>
     `;
 
     const cards = document.getElementById('optimalCards');
-    const strats = data.high_n_strategies || [];
-    if (strats.length === 0) {
+    const sections = data.sections || [];
+    const flatStrats = data.high_n_strategies || [];
+    window._optStrategies = flatStrats;
+
+    if (flatStrats.length === 0) {
         cards.innerHTML = '<p style="color:#94a3b8;font-size:13px;">表示可能な戦略がありません</p>';
         return;
     }
 
     const LABELS = {
-        both_strong: '両相場◎',
-        both_good:   '両相場○',
-        both_ok:     '両相場△',
-        bull_only:   '上昇のみ',
-        reliable:    '高信頼',
-        moderate:    '中信頼',
-        mid:         '準信頼',
-        selective:   '選択的',
+        both_strong: '両相場◎', both_good: '両相場○', both_ok: '両相場△',
+        bull_only: '上昇のみ', regime_combo: 'コンボ', short_vb: 'VBシグナル',
+        reliable: '高信頼', moderate: '中信頼', mid: '準信頼', selective: '選択的',
     };
-    const seen = new Set();
+    const fmtPF = (v) => { if (v == null) return '-'; if (v > 9999) return '∞'; return v.toFixed(1); };
+    const fmtN = (v) => v != null ? v.toLocaleString() : '-';
+    const fmtWr = (v) => v != null ? (v * 100).toFixed(1) + '%' : '-';
+
     let html = '';
     let cardIdx = 0;
-    window._optStrategies = strats;
+    const seen = new Set();
 
-    for (const s of strats) {
+    function renderCard(s) {
         const te = s.test || {};
         const bu = s.bull || {};
         const be = s.bear || {};
         const al = s.all || {};
+        const tr = s.train || {};
         const p = s.params || {};
-        const key = `${p.base || ''}-${p.hd}`;
-        if (seen.has(key)) continue;
+        const cat = s.category || '';
+
+        const key = `${p.base || p.name_jp || ''}-${p.hd}-${p.tp}-${p.sl}`;
+        if (seen.has(key)) return '';
         seen.add(key);
-
-        const bullWr = bu.wr != null ? (bu.wr * 100).toFixed(1) : '?';
-        const bearWr = be.wr != null ? (be.wr * 100).toFixed(1) : '?';
-        const minWr = Math.min(bu.wr || 0, be.wr || 0);
-        const wrCls = minWr >= 0.75 ? 'wr-high' : minWr >= 0.65 ? 'wr-mid' : 'wr-low';
-        const rel = s.reliability || 'both_ok';
-        const relLabel = LABELS[rel] || rel;
-
-        const condParts = [];
-        const nameJP = p.name_jp || p.base;
-        if (nameJP) condParts.push(formatConditionJP(nameJP));
-
-        const rawCond = p.base || '';
         const ci = cardIdx++;
 
-        const fmtPF = (v) => {
-            if (v == null) return '-';
-            if (v > 9999) return '∞';
-            return v.toFixed(1);
-        };
-        const fmtN = (v) => v != null ? v.toLocaleString() : '-';
+        const rel = s.reliability || 'both_ok';
+        const relLabel = LABELS[rel] || rel;
+        const rawCond = p.base || '';
+        const condText = formatConditionJP(p.name_jp || p.base || '');
 
-        html += `<div class="opt-card reliability-${rel}" onclick="showMatchingStocks(${ci}, this)" data-cond="${esc(rawCond)}" style="cursor:pointer;">
-            <div class="opt-card-header">
-                <span class="opt-card-wr ${wrCls}">📈${bullWr}% 📉${bearWr}%</span>
-                <span class="opt-card-badge ${rel}">${esc(relLabel)}</span>
-            </div>
-            <div class="opt-card-metrics">
+        const hasBullBear = bu.wr != null && be.wr != null && bu.wr > 0 && be.wr > 0;
+
+        let headerWr, wrCls, metricsHtml;
+
+        if (hasBullBear) {
+            const bullWr = (bu.wr * 100).toFixed(1);
+            const bearWr = (be.wr * 100).toFixed(1);
+            const minWr = Math.min(bu.wr, be.wr);
+            wrCls = minWr >= 0.75 ? 'wr-high' : minWr >= 0.65 ? 'wr-mid' : 'wr-low';
+            headerWr = `📈${bullWr}% 📉${bearWr}%`;
+            metricsHtml = `
                 <div class="opt-metric"><div class="opt-metric-label">上昇相場</div><div class="opt-metric-value">${bullWr}% <small>(${fmtN(bu.n)})</small></div></div>
                 <div class="opt-metric"><div class="opt-metric-label">下落相場</div><div class="opt-metric-value">${bearWr}% <small>(${fmtN(be.n)})</small></div></div>
-                <div class="opt-metric"><div class="opt-metric-label">テストWR</div><div class="opt-metric-value">${te.wr != null ? (te.wr * 100).toFixed(1) + '%' : '-'}</div></div>
+                <div class="opt-metric"><div class="opt-metric-label">テストWR</div><div class="opt-metric-value">${fmtWr(te.wr)}</div></div>
+                <div class="opt-metric"><div class="opt-metric-label">平均利益</div><div class="opt-metric-value">${al.avg != null ? (al.avg * 100).toFixed(1) + '%' : '-'}</div></div>`;
+        } else {
+            const testWr = te.wr || al.wr || 0;
+            wrCls = testWr >= 0.75 ? 'wr-high' : testWr >= 0.65 ? 'wr-mid' : 'wr-low';
+            headerWr = `WR ${(testWr * 100).toFixed(1)}%`;
+            metricsHtml = `
+                <div class="opt-metric"><div class="opt-metric-label">テスト取引</div><div class="opt-metric-value">${fmtN(te.n)}</div></div>
+                <div class="opt-metric"><div class="opt-metric-label">PF</div><div class="opt-metric-value">${fmtPF(te.pf || al.pf)}</div></div>
                 <div class="opt-metric"><div class="opt-metric-label">平均利益</div><div class="opt-metric-value">${al.avg != null ? (al.avg * 100).toFixed(1) + '%' : '-'}</div></div>
+                <div class="opt-metric"><div class="opt-metric-label">訓練WR</div><div class="opt-metric-value">${fmtWr(tr.wr)}</div></div>`;
+        }
+
+        let exitLine = `保有: ${fmtHoldingDays(p.hd)}`;
+        if (s.exit_desc) {
+            exitLine = s.exit_desc;
+        } else {
+            exitLine += ` / 全${fmtN(al.n)}件 / PF ${fmtPF(al.pf)}`;
+        }
+
+        return `<div class="opt-card reliability-${rel}" onclick="showMatchingStocks(${ci}, this)" data-cond="${esc(rawCond)}" style="cursor:pointer;">
+            <div class="opt-card-header">
+                <span class="opt-card-wr ${wrCls}">${headerWr}</span>
+                <span class="opt-card-badge ${rel}">${esc(relLabel)}</span>
             </div>
+            <div class="opt-card-metrics">${metricsHtml}</div>
             <div class="opt-card-conditions">
-                <span class="cond-label">条件:</span>${esc(condParts.join(' + '))}
-                <div class="cond-exit"><span class="cond-label">保有:</span>${esc(fmtHoldingDays(p.hd))} / 全${fmtN(al.n)}件 / PF ${fmtPF(al.pf)}</div>
+                <span class="cond-label">条件:</span>${esc(condText)}
+                <div class="cond-exit">${esc(exitLine)}</div>
             </div>
             <div class="opt-match-hint">クリックで該当銘柄を表示</div>
             <div class="opt-match-panel" id="matchPanel${ci}" style="display:none;"></div>
         </div>`;
     }
+
+    if (sections.length > 0) {
+        for (const sec of sections) {
+            const strats = sec.strategies || [];
+            if (strats.length === 0) continue;
+            html += `<div class="opt-section">
+                <h4 class="opt-section-title">${esc(sec.title)}</h4>
+                ${sec.subtitle ? `<p class="opt-section-sub">${esc(sec.subtitle)}</p>` : ''}
+                <div class="opt-section-cards">`;
+            for (const s of strats) html += renderCard(s);
+            html += `</div></div>`;
+        }
+    } else {
+        for (const s of flatStrats) html += renderCard(s);
+    }
+
     cards.innerHTML = html;
 }
 

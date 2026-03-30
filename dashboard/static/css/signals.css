@@ -880,6 +880,43 @@
     color: #64748b;
 }
 
+.opt-card-badge.regime_combo {
+    background: #ede9fe;
+    color: #6d28d9;
+}
+
+.opt-card-badge.short_vb {
+    background: #fce7f3;
+    color: #be185d;
+}
+
+.opt-section {
+    margin-bottom: 24px;
+}
+
+.opt-section-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #e2e8f0;
+    margin: 0 0 4px 0;
+    padding: 8px 12px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 8px;
+    border-left: 3px solid #3b82f6;
+}
+
+.opt-section-sub {
+    font-size: 11px;
+    color: #94a3b8;
+    margin: 0 0 10px 15px;
+}
+
+.opt-section-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
 .opt-card-metrics {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
