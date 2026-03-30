@@ -11,7 +11,7 @@ DATA_DIR.mkdir(exist_ok=True)
 JQUANTS_API_KEY = os.getenv("JQUANTS_API_KEY", "")
 
 # --- データ取得設定 ---
-DATA_YEARS = 1
+DATA_YEARS = 5
 FETCH_WORKERS = 4
 
 # --- 特徴量パラメータ ---

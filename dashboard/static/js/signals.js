@@ -426,19 +426,22 @@ function renderOptimalConditions(data) {
     if (!section) return;
 
     const summary = data.summary || {};
-    const total = (summary.wr90 || 0) + (summary.wr80_90 || 0) + (summary.wr70_80 || 0) + (summary.wr60_70 || 0);
+    const total = summary.total || (summary.wr90 || 0) + (summary.wr80_90 || 0) + (summary.wr70_80 || 0) + (summary.wr60_70 || 0);
     if (total === 0) return;
 
     section.style.display = 'block';
 
+    const regime = data.regime_info || {};
+    const bearPct = regime.bear_pct ? (regime.bear_pct * 100).toFixed(0) + '%' : '?';
     const sumEl = document.getElementById('optimalSummary');
     sumEl.innerHTML = `
-        <div class="optimal-stat"><span class="stat-label">90%+:</span><span class="stat-value wr90">${summary.wr90 || 0}</span></div>
-        <div class="optimal-stat"><span class="stat-label">80-90%:</span><span class="stat-value wr80">${summary.wr80_90 || 0}</span></div>
-        <div class="optimal-stat"><span class="stat-label">70-80%:</span><span class="stat-value wr70">${summary.wr70_80 || 0}</span></div>
-        <div class="optimal-stat"><span class="stat-label">60-70%:</span><span class="stat-value">${summary.wr60_70 || 0}</span></div>
-        <div class="optimal-stat"><span class="stat-label">合計:</span><span class="stat-value">${total.toLocaleString()}</span></div>
-        <div class="optimal-stat"><span class="stat-label">訓練期間:</span><span class="stat-value">~ ${data.train_end || '?'}</span></div>
+        <div class="optimal-stat"><span class="stat-label">両方75%+:</span><span class="stat-value wr90">${summary.both75plus || 0}</span></div>
+        <div class="optimal-stat"><span class="stat-label">両方70%+:</span><span class="stat-value wr80">${summary.both70plus || 0}</span></div>
+        <div class="optimal-stat"><span class="stat-label">両方65%+:</span><span class="stat-value wr70">${summary.both65plus || 0}</span></div>
+        <div class="optimal-stat"><span class="stat-label">両方60%+:</span><span class="stat-value">${summary.both60plus || 0}</span></div>
+        <div class="optimal-stat"><span class="stat-label">合計:</span><span class="stat-value">${total}</span></div>
+        <div class="optimal-stat"><span class="stat-label">データ:</span><span class="stat-value">${data.data_range || '?'}</span></div>
+        <div class="optimal-stat"><span class="stat-label">下落相場:</span><span class="stat-value">${bearPct}</span></div>
     `;
 
     const cards = document.getElementById('optimalCards');
@@ -449,10 +452,14 @@ function renderOptimalConditions(data) {
     }
 
     const LABELS = {
-        reliable:  'N≥500 高信頼',
-        moderate:  'N≥200 中信頼',
-        mid:       'N≥100 準信頼',
-        selective: 'N≥30 選択的'
+        both_strong: '両相場◎',
+        both_good:   '両相場○',
+        both_ok:     '両相場△',
+        bull_only:   '上昇のみ',
+        reliable:    '高信頼',
+        moderate:    '中信頼',
+        mid:         '準信頼',
+        selective:   '選択的',
     };
     const seen = new Set();
     let html = '';
@@ -461,27 +468,26 @@ function renderOptimalConditions(data) {
 
     for (const s of strats) {
         const te = s.test || {};
-        const tr = s.train || {};
+        const bu = s.bull || {};
+        const be = s.bear || {};
+        const al = s.all || {};
         const p = s.params || {};
-        const key = `${p.base || ''}-${(p.extra||[]).join(',')}-${te.wr}-${p.hd}-${p.tp}-${p.sl}-${s.reliability}`;
+        const key = `${p.base || ''}-${p.hd}`;
         if (seen.has(key)) continue;
         seen.add(key);
 
-        const wr = (te.wr * 100).toFixed(1);
-        const wrCls = te.wr >= 0.80 ? 'wr-high' : te.wr >= 0.70 ? 'wr-mid' : 'wr-low';
-        const rel = s.reliability || 'selective';
+        const bullWr = bu.wr != null ? (bu.wr * 100).toFixed(1) : '?';
+        const bearWr = be.wr != null ? (be.wr * 100).toFixed(1) : '?';
+        const minWr = Math.min(bu.wr || 0, be.wr || 0);
+        const wrCls = minWr >= 0.75 ? 'wr-high' : minWr >= 0.65 ? 'wr-mid' : 'wr-low';
+        const rel = s.reliability || 'both_ok';
         const relLabel = LABELS[rel] || rel;
 
         const condParts = [];
-        if (p.base) condParts.push(formatConditionJP(p.base));
-        if (p.extra && p.extra.length > 0) condParts.push(formatConditionJP(p.extra.join(' & ')));
+        const nameJP = p.name_jp || p.base;
+        if (nameJP) condParts.push(formatConditionJP(nameJP));
 
-        const exitParts = [];
-        exitParts.push(`保有 ${fmtHoldingDays(p.hd)}`);
-        if (p.tp != null) exitParts.push(`利確 +${(p.tp * 100).toFixed(1)}%`);
-        if (p.sl != null) exitParts.push(`損切 ${(p.sl * 100).toFixed(1)}%`);
-
-        const rawCond = (p.base || '') + (p.extra && p.extra.length ? ' & ' + p.extra.join(' & ') : '');
+        const rawCond = p.base || '';
         const ci = cardIdx++;
 
         const fmtPF = (v) => {
@@ -489,21 +495,22 @@ function renderOptimalConditions(data) {
             if (v > 9999) return '∞';
             return v.toFixed(1);
         };
+        const fmtN = (v) => v != null ? v.toLocaleString() : '-';
 
         html += `<div class="opt-card reliability-${rel}" onclick="showMatchingStocks(${ci}, this)" data-cond="${esc(rawCond)}" style="cursor:pointer;">
             <div class="opt-card-header">
-                <span class="opt-card-wr ${wrCls}">WR ${wr}%</span>
+                <span class="opt-card-wr ${wrCls}">📈${bullWr}% 📉${bearWr}%</span>
                 <span class="opt-card-badge ${rel}">${esc(relLabel)}</span>
             </div>
             <div class="opt-card-metrics">
-                <div class="opt-metric"><div class="opt-metric-label">テスト取引</div><div class="opt-metric-value">${te.n != null ? te.n.toLocaleString() : '-'}</div></div>
-                <div class="opt-metric"><div class="opt-metric-label">PF</div><div class="opt-metric-value">${fmtPF(te.pf)}</div></div>
-                <div class="opt-metric"><div class="opt-metric-label">平均利益</div><div class="opt-metric-value">${te.avg != null ? (te.avg * 100).toFixed(2) + '%' : '-'}</div></div>
-                <div class="opt-metric"><div class="opt-metric-label">訓練WR</div><div class="opt-metric-value">${tr.wr != null ? (tr.wr * 100).toFixed(1) + '%' : '-'}</div></div>
+                <div class="opt-metric"><div class="opt-metric-label">上昇相場</div><div class="opt-metric-value">${bullWr}% <small>(${fmtN(bu.n)})</small></div></div>
+                <div class="opt-metric"><div class="opt-metric-label">下落相場</div><div class="opt-metric-value">${bearWr}% <small>(${fmtN(be.n)})</small></div></div>
+                <div class="opt-metric"><div class="opt-metric-label">テストWR</div><div class="opt-metric-value">${te.wr != null ? (te.wr * 100).toFixed(1) + '%' : '-'}</div></div>
+                <div class="opt-metric"><div class="opt-metric-label">平均利益</div><div class="opt-metric-value">${al.avg != null ? (al.avg * 100).toFixed(1) + '%' : '-'}</div></div>
             </div>
             <div class="opt-card-conditions">
                 <span class="cond-label">条件:</span>${esc(condParts.join(' + '))}
-                <div class="cond-exit"><span class="cond-label">出口:</span>${esc(exitParts.join(' / '))}</div>
+                <div class="cond-exit"><span class="cond-label">保有:</span>${esc(fmtHoldingDays(p.hd))} / 全${fmtN(al.n)}件 / PF ${fmtPF(al.pf)}</div>
             </div>
             <div class="opt-match-hint">クリックで該当銘柄を表示</div>
             <div class="opt-match-panel" id="matchPanel${ci}" style="display:none;"></div>

@@ -812,16 +812,20 @@
     box-shadow: 0 2px 8px rgba(0,0,0,0.06);
 }
 
-.opt-card.reliability-reliable {
+.opt-card.reliability-reliable, .opt-card.reliability-both_strong {
     border-left: 3px solid #16a34a;
 }
 
-.opt-card.reliability-moderate {
+.opt-card.reliability-moderate, .opt-card.reliability-both_good {
     border-left: 3px solid #2563eb;
 }
 
-.opt-card.reliability-selective {
+.opt-card.reliability-selective, .opt-card.reliability-both_ok {
     border-left: 3px solid #f59e0b;
+}
+
+.opt-card.reliability-bull_only {
+    border-left: 3px solid #94a3b8;
 }
 
 .opt-card-header {
@@ -856,19 +860,24 @@
     font-weight: 700;
 }
 
-.opt-card-badge.reliable {
+.opt-card-badge.reliable, .opt-card-badge.both_strong {
     background: #dcfce7;
     color: #15803d;
 }
 
-.opt-card-badge.moderate {
+.opt-card-badge.moderate, .opt-card-badge.both_good {
     background: #dbeafe;
     color: #1e40af;
 }
 
-.opt-card-badge.selective {
+.opt-card-badge.selective, .opt-card-badge.both_ok {
     background: #fef3c7;
     color: #b45309;
+}
+
+.opt-card-badge.bull_only {
+    background: #f1f5f9;
+    color: #64748b;
 }
 
 .opt-card-metrics {
