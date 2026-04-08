@@ -404,9 +404,11 @@ class JQuantsClient:
 
         平均ではなく中央値を使い、1日だけのスパイク（イナゴタワー）に
         引っ張られない安定した比較を行う。
+        デッド・キャット・バウンスを完全排除するため、
+        25SMA傾き + 75SMA + 高値からの距離で厳格にフィルターする。
 
         Args:
-            opens/highs/lows/closes/volumes: 古い順の価格・出来高配列（41日以上必要）
+            opens/highs/lows/closes/volumes: 古い順の配列（75日以上必要）
             regime_ratio_min: recent_base / past_base の閾値
             min_recent_vol:   recent_base の最低出来高
 
@@ -416,16 +418,16 @@ class JQuantsClient:
         n = len(closes)
         result = {
             "passed": False, "past_base": 0, "recent_base": 0,
-            "regime_ratio": 0, "sma25": None, "sma5": None,
+            "regime_ratio": 0, "sma25": None, "sma5": None, "sma75": None,
+            "sma25_slope_ok": False, "above_75sma": False,
+            "high60d_ok": False,
             "period_return_ok": False, "trend_ok": False, "candle_ok": False,
         }
 
-        if n < 41:
+        # 75SMAに25日 + マージンで75日必要。出来高比較に41日。合わせて75日。
+        if n < 75:
             return False, result
 
-        # Day 0 = index n-1 (直近), Day k = index n-1-k
-        # past_base:   Day 40 ~ Day 11 → index [n-41 : n-11] (30要素)
-        # recent_base: Day 10 ~ Day 0  → index [n-11 : n]    (11要素)
         past_vols = volumes[n - 41: n - 11]
         recent_vols = volumes[n - 11: n]
 
@@ -446,31 +448,54 @@ class JQuantsClient:
         if recent_base < min_recent_vol:
             return False, result
 
-        # --- 条件C: 25SMA / 5SMA ---
+        day0_close = closes[-1]
+
+        # --- 25SMA: 株価が上 ---
         sma25 = JQuantsClient._sma(closes, 25)
         sma5 = JQuantsClient._sma(closes, 5)
         result["sma25"] = round(sma25, 1) if sma25 else None
         result["sma5"] = round(sma5, 1) if sma5 else None
 
-        if sma25 is None or closes[-1] <= sma25:
+        if sma25 is None or day0_close <= sma25:
             return False, result
 
-        # --- 厳格トレンドフィルター1: 期間リターンがプラス ---
-        # Day 0 close >= Day 10 close
-        day0_close = closes[-1]
+        # --- NEW: 25SMA の傾きが上向き or 横ばい ---
+        # 当日の25SMA >= 5営業日前の25SMA
+        sma25_5d_ago = JQuantsClient._sma(closes[:-5], 25) if n >= 30 else None
+        sma25_slope_ok = sma25_5d_ago is not None and sma25 >= sma25_5d_ago
+        result["sma25_slope_ok"] = sma25_slope_ok
+        if not sma25_slope_ok:
+            return False, result
+
+        # --- NEW: 75SMA フィルター（長期下落トレンド排除） ---
+        sma75 = JQuantsClient._sma(closes, 75)
+        result["sma75"] = round(sma75, 1) if sma75 else None
+        above_75sma = sma75 is not None and day0_close > sma75
+        result["above_75sma"] = above_75sma
+        if not above_75sma:
+            return False, result
+
+        # --- NEW: 過去60日最高値からの距離（暴落からの反発排除） ---
+        high_60d = max(closes[max(n - 60, 0): n])
+        high60d_ok = day0_close >= high_60d * 0.80
+        result["high60d_ok"] = high60d_ok
+        if not high60d_ok:
+            return False, result
+
+        # --- 期間リターンがプラス: Day 0 close >= Day 10 close ---
         day10_close = closes[n - 11]
         period_return_ok = day0_close >= day10_close
         result["period_return_ok"] = period_return_ok
         if not period_return_ok:
             return False, result
 
-        # --- 厳格トレンドフィルター2: 5SMA >= 25SMA ---
+        # --- 5SMA >= 25SMA ---
         trend_ok = sma5 is not None and sma5 >= sma25
         result["trend_ok"] = trend_ok
         if not trend_ok:
             return False, result
 
-        # --- 厳格トレンドフィルター3: 最大出来高日が大陰線でない ---
+        # --- 最大出来高日が大陰線でない ---
         recent_10_vols = volumes[n - 11: n]
         recent_10_opens = opens[n - 11: n]
         recent_10_closes = closes[n - 11: n]
@@ -519,16 +544,16 @@ class JQuantsClient:
             if item.get("MktNm") != "TOKYO PRO MARKET"
         }
 
-        # ── 1. 過去60営業日+余裕分のカレンダー日を並列フェッチ ──
+        # ── 1. 過去75営業日+余裕分のカレンダー日を並列フェッチ ──
         if target_date:
             base = datetime.strptime(target_date, "%Y-%m-%d")
         else:
             base = datetime.now()
 
-        # 41営業日 + MA25用バッファ → 約90カレンダー日
+        # 75営業日 + 休日マージン → 約120カレンダー日
         candidate_dates = [
             (base - timedelta(days=i)).strftime("%Y-%m-%d")
-            for i in range(0, 90)
+            for i in range(0, 120)
         ]
 
         date_data: Dict[str, Dict] = {}
@@ -547,11 +572,11 @@ class JQuantsClient:
                     date_data[d] = result
 
         trading_days = sorted(date_data.keys(), reverse=True)
-        if len(trading_days) < 41:
-            logger.warning(f"取引日データ不足: {len(trading_days)}日 (41日必要)")
+        if len(trading_days) < 75:
+            logger.warning(f"取引日データ不足: {len(trading_days)}日 (75日必要)")
             return []
 
-        trading_days = trading_days[:65]
+        trading_days = trading_days[:85]
         today_date = trading_days[0]
         today_prices = date_data[today_date]
 
@@ -581,7 +606,7 @@ class JQuantsClient:
                     closes_arr.append(c)
                     volumes_arr.append(v)
 
-            if len(closes_arr) < 41:
+            if len(closes_arr) < 75:
                 continue
 
             passed, details = self._detect_regime_change(
