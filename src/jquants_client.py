@@ -398,113 +398,74 @@ class JQuantsClient:
 
     @staticmethod
     def _detect_regime_change(opens, highs, lows, closes, volumes,
-                              regime_ratio_min=2.0, min_recent_vol=100_000):
+                              regime_ratio_min=2.5, min_recent_vol=100_000):
         """
-        出来高のレジームチェンジ（水準の底上げ）を検出する。
+        出来高サージ × パーフェクトオーダーで初動を高速検知する。
 
-        平均ではなく中央値を使い、1日だけのスパイク（イナゴタワー）に
-        引っ張られない安定した比較を行う。
-        デッド・キャット・バウンスを完全排除するため、
-        25SMA傾き + 75SMA + 高値からの距離で厳格にフィルターする。
+        出来高: 過去35日(中央値) vs 直近3日(平均) で急変を即座に捕捉。
+        トレンド: 終値 > 5SMA > 25SMA > 75SMA のパーフェクトオーダーで
+                  デッド・キャット・バウンスを物理的に排除。
 
         Args:
             opens/highs/lows/closes/volumes: 古い順の配列（75日以上必要）
-            regime_ratio_min: recent_base / past_base の閾値
-            min_recent_vol:   recent_base の最低出来高
+            regime_ratio_min: recent_surge / past_base の閾値 (default 2.5)
+            min_recent_vol:   recent_surge の最低出来高
 
         Returns:
             (passed: bool, details: dict)
         """
         n = len(closes)
         result = {
-            "passed": False, "past_base": 0, "recent_base": 0,
-            "regime_ratio": 0, "sma25": None, "sma5": None, "sma75": None,
-            "sma25_slope_ok": False, "above_75sma": False,
-            "high60d_ok": False,
-            "period_return_ok": False, "trend_ok": False, "candle_ok": False,
+            "passed": False, "past_base": 0, "recent_surge": 0,
+            "surge_ratio": 0,
+            "sma5": None, "sma25": None, "sma75": None,
+            "perfect_order": False,
         }
 
-        # 75SMAに25日 + マージンで75日必要。出来高比較に41日。合わせて75日。
         if n < 75:
             return False, result
 
-        past_vols = volumes[n - 41: n - 11]
-        recent_vols = volumes[n - 11: n]
+        # ── 出来高サージ検知 ──
+        # past_base:    Day 40 ~ Day 5 (35日間) の中央値
+        # recent_surge: Day 2 ~ Day 0  (直近3日)  の平均値
+        past_vols = volumes[n - 41: n - 5]       # 35 elements
+        recent_3d_vols = volumes[n - 3: n]        # 3 elements
 
         past_base = JQuantsClient._median(past_vols)
-        recent_base = JQuantsClient._median(recent_vols)
+        recent_surge = sum(recent_3d_vols) / 3 if len(recent_3d_vols) == 3 else 0
 
-        regime_ratio = recent_base / past_base if past_base > 0 else 0
+        surge_ratio = recent_surge / past_base if past_base > 0 else 0
 
         result["past_base"] = round(past_base)
-        result["recent_base"] = round(recent_base)
-        result["regime_ratio"] = round(regime_ratio, 2)
+        result["recent_surge"] = round(recent_surge)
+        result["surge_ratio"] = round(surge_ratio, 2)
 
-        # --- 条件A: 水準の底上げ ---
-        if regime_ratio < regime_ratio_min:
+        if surge_ratio < regime_ratio_min:
             return False, result
 
-        # --- 条件B: 流動性フィルター ---
-        if recent_base < min_recent_vol:
+        if recent_surge < min_recent_vol:
+            return False, result
+
+        # ── パーフェクトオーダー（鉄壁トレンドフィルター） ──
+        sma5 = JQuantsClient._sma(closes, 5)
+        sma25 = JQuantsClient._sma(closes, 25)
+        sma75 = JQuantsClient._sma(closes, 75)
+
+        result["sma5"] = round(sma5, 1) if sma5 else None
+        result["sma25"] = round(sma25, 1) if sma25 else None
+        result["sma75"] = round(sma75, 1) if sma75 else None
+
+        if sma5 is None or sma25 is None or sma75 is None:
             return False, result
 
         day0_close = closes[-1]
 
-        # --- 25SMA: 株価が上 ---
-        sma25 = JQuantsClient._sma(closes, 25)
-        sma5 = JQuantsClient._sma(closes, 5)
-        result["sma25"] = round(sma25, 1) if sma25 else None
-        result["sma5"] = round(sma5, 1) if sma5 else None
-
-        if sma25 is None or day0_close <= sma25:
-            return False, result
-
-        # --- NEW: 25SMA の傾きが上向き or 横ばい ---
-        # 当日の25SMA >= 5営業日前の25SMA
-        sma25_5d_ago = JQuantsClient._sma(closes[:-5], 25) if n >= 30 else None
-        sma25_slope_ok = sma25_5d_ago is not None and sma25 >= sma25_5d_ago
-        result["sma25_slope_ok"] = sma25_slope_ok
-        if not sma25_slope_ok:
-            return False, result
-
-        # --- NEW: 75SMA フィルター（長期下落トレンド排除） ---
-        sma75 = JQuantsClient._sma(closes, 75)
-        result["sma75"] = round(sma75, 1) if sma75 else None
-        above_75sma = sma75 is not None and day0_close > sma75
-        result["above_75sma"] = above_75sma
-        if not above_75sma:
-            return False, result
-
-        # --- NEW: 過去60日最高値からの距離（暴落からの反発排除） ---
-        high_60d = max(closes[max(n - 60, 0): n])
-        high60d_ok = day0_close >= high_60d * 0.80
-        result["high60d_ok"] = high60d_ok
-        if not high60d_ok:
-            return False, result
-
-        # --- 期間リターンがプラス: Day 0 close >= Day 10 close ---
-        day10_close = closes[n - 11]
-        period_return_ok = day0_close >= day10_close
-        result["period_return_ok"] = period_return_ok
-        if not period_return_ok:
-            return False, result
-
-        # --- 5SMA >= 25SMA ---
-        trend_ok = sma5 is not None and sma5 >= sma25
-        result["trend_ok"] = trend_ok
-        if not trend_ok:
-            return False, result
-
-        # --- 最大出来高日が大陰線でない ---
-        recent_10_vols = volumes[n - 11: n]
-        recent_10_opens = opens[n - 11: n]
-        recent_10_closes = closes[n - 11: n]
-        max_vol_idx = recent_10_vols.index(max(recent_10_vols))
-        mv_open = recent_10_opens[max_vol_idx]
-        mv_close = recent_10_closes[max_vol_idx]
-        candle_ok = mv_open <= 0 or mv_close >= mv_open * 0.98
-        result["candle_ok"] = candle_ok
-        if not candle_ok:
+        # 条件A: 25SMA > 75SMA（中期線が長期線の上）
+        # 条件B: 5SMA > 25SMA （短期線が中期線の上）
+        # 条件C: 終値 > 5SMA  （株価が一番上）
+        perfect_order = (sma25 > sma75) and (sma5 > sma25) and (day0_close > sma5)
+        result["perfect_order"] = perfect_order
+        if not perfect_order:
             return False, result
 
         result["passed"] = True
@@ -524,11 +485,11 @@ class JQuantsClient:
         下落トレンド中の投げ売りも厳格なトレンドフィルターで排除する。
 
         判定:
-          past_base  = Day40~Day11 (30日間) の出来高中央値
-          recent_base = Day10~Day0 (11日間) の出来高中央値
-          regime_ratio = recent_base / past_base >= 2.0x
-          + 流動性フィルター (recent_base >= 100,000株)
-          + 25SMA上抜け + 5SMA >= 25SMA + 期間リターン正 + 大陰線排除
+          past_base      = Day40~Day5 (35日間) の出来高中央値
+          recent_surge   = Day2~Day0  (直近3日) の出来高平均
+          surge_ratio    = recent_surge / past_base >= 2.5x
+          + 流動性フィルター (recent_surge >= 100,000株)
+          + パーフェクトオーダー: 終値 > 5SMA > 25SMA > 75SMA
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
         import statistics
@@ -637,7 +598,7 @@ class JQuantsClient:
             if len(closes_arr) >= 11:
                 price_10d_chg = (today_close - closes_arr[-11]) / closes_arr[-11] * 100
 
-            regime_ratio = details["regime_ratio"]
+            surge_ratio = details["surge_ratio"]
 
             m = master_dict.get(code, {})
             results.append({
@@ -651,13 +612,13 @@ class JQuantsClient:
                 "volume":         today_vol,
                 "turnover":       today_turnover,
                 "change_rate":    round(today_change, 2),
-                "vol_ratio_5d":   round(regime_ratio, 2),
+                "vol_ratio_5d":   round(surge_ratio, 2),
                 "price_5d_chg":   round(price_5d_chg, 2),
                 "price_10d_chg":  round(price_10d_chg, 2),
                 "past_base":      details["past_base"],
-                "recent_base":    details["recent_base"],
-                "regime_ratio":   regime_ratio,
-                "_score":         regime_ratio,
+                "recent_surge":   details["recent_surge"],
+                "surge_ratio":    surge_ratio,
+                "_score":         surge_ratio,
             })
 
         if not results:
@@ -733,23 +694,24 @@ class JQuantsClient:
         # ── 4. タグ付け ──
         for s in top:
             tags = []
-            rr = s["regime_ratio"]
+            sr = s["surge_ratio"]
             cr = s["change_rate"]
             va = s["turnover"]
             mkt = s["market"]
 
-            if rr >= 5.0:   tags.append("水準×5↑")
-            elif rr >= 3.0: tags.append("水準×3↑")
-            elif rr >= 2.0: tags.append("水準×2↑")
+            if sr >= 8.0:   tags.append("爆発×8↑")
+            elif sr >= 5.0: tags.append("急増×5↑")
+            elif sr >= 3.0: tags.append("増加×3↑")
+            else:           tags.append("初動×2.5↑")
 
             if cr >= 10:    tags.append("急騰")
             elif cr >= 3:   tags.append("上昇")
             elif cr >= -1:  tags.append("堅調")
             else:           tags.append("調整中")
 
-            rb = s["recent_base"]
-            if rb >= 1_000_000:   tags.append("大出来高")
-            elif rb >= 500_000:   tags.append("中出来高")
+            rs = s["recent_surge"]
+            if rs >= 1_000_000:   tags.append("大出来高")
+            elif rs >= 500_000:   tags.append("中出来高")
 
             if va >= 10_000_000_000: tags.append("超大型")
             elif va >= 1_000_000_000: tags.append("大商い")

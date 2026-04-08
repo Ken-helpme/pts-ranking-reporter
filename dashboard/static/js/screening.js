@@ -695,8 +695,8 @@ function renderBreakoutCards(stocks) {
     grid.innerHTML = '';
 
     const tagMap = {
-        '水準×5↑':  'btag-vol5',  '水準×3↑':  'btag-vol3',
-        '水準×2↑':  'btag-vol2',
+        '爆発×8↑':  'btag-vol5',  '急増×5↑':  'btag-vol3',
+        '増加×3↑':  'btag-vol2',  '初動×2.5↑': 'btag-vol1',
         '週次×4↑':  'btag-vol5',  '週次×3↑':  'btag-vol3',
         '週次×2↑':  'btag-vol2',  '週次増加':  'btag-volinc',
         '急騰':      'btag-surge', '上昇':      'btag-rising',
@@ -769,7 +769,7 @@ function renderBreakoutCards(stocks) {
                 <span class="bo-change ${crCls}">${crSign}${cr.toFixed(2)}%</span>
             </div>
             <div class="bo-vol-row">
-                <span class="bo-vol-label">水準比</span>
+                <span class="bo-vol-label">サージ比</span>
                 <div class="bo-vol-bar-wrap">
                     <div class="bo-vol-bar" style="width:${volPct}%"></div>
                 </div>

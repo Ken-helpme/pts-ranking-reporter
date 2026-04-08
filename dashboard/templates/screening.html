@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>銘柄スクリーニング | PTSランキング</title>
     <link rel="stylesheet" href="/static/css/style.css">
-    <link rel="stylesheet" href="/static/css/screening.css">
+    <link rel="stylesheet" href="/static/css/screening.css?v=20260408a">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 
@@ -59,7 +59,7 @@
                 </div>
                 <!-- 適用中条件ラベル -->
                 <div id="appliedParamsLabel" class="applied-params-label" style="display:none;"></div>
-                <p class="breakout-sub">出来高中央値ベースで「水準の底上げ」を検出（中央値2.0x以上）。デッド・キャット・バウンス完全排除: 25SMA上向き + 75SMA上 + 高値-20%以内 + 5SMA≧25SMA + 大陰線なし。</p>
+                <p class="breakout-sub">直近3日の平均出来高が過去35日の中央値の2.5倍以上で初動を即座に検知。パーフェクトオーダー（終値 &gt; 5SMA &gt; 25SMA &gt; 75SMA）でデッドキャットバウンスを完全排除。</p>
             </div>
 
             <!-- 自動改善パネル -->
@@ -146,7 +146,7 @@
         </div>
     </div>
 
-    <script src="/static/js/screening.js"></script>
+    <script src="/static/js/screening.js?v=20260408a"></script>
 </body>
 
 </html>
