@@ -376,37 +376,137 @@ class JQuantsClient:
 
         return picks
 
-    # ========== 出来高急増×上昇トレンド ==========
+    # ========== 出来高レジームチェンジ検出 ==========
+
+    @staticmethod
+    def _median(arr):
+        """中央値を計算。スパイクにロバストな中心傾向の推定。"""
+        if not arr:
+            return 0
+        s = sorted(arr)
+        n = len(s)
+        if n % 2 == 1:
+            return s[n // 2]
+        return (s[n // 2 - 1] + s[n // 2]) / 2
+
+    @staticmethod
+    def _sma(prices, period):
+        """直近 period 個の単純移動平均。データ不足時は None。"""
+        if len(prices) < period:
+            return None
+        return sum(prices[-period:]) / period
+
+    @staticmethod
+    def _detect_regime_change(opens, highs, lows, closes, volumes,
+                              regime_ratio_min=2.0, min_recent_vol=100_000):
+        """
+        出来高のレジームチェンジ（水準の底上げ）を検出する。
+
+        平均ではなく中央値を使い、1日だけのスパイク（イナゴタワー）に
+        引っ張られない安定した比較を行う。
+
+        Args:
+            opens/highs/lows/closes/volumes: 古い順の価格・出来高配列（41日以上必要）
+            regime_ratio_min: recent_base / past_base の閾値
+            min_recent_vol:   recent_base の最低出来高
+
+        Returns:
+            (passed: bool, details: dict)
+        """
+        n = len(closes)
+        result = {
+            "passed": False, "past_base": 0, "recent_base": 0,
+            "regime_ratio": 0, "sma25": None, "sma5": None,
+            "period_return_ok": False, "trend_ok": False, "candle_ok": False,
+        }
+
+        if n < 41:
+            return False, result
+
+        # Day 0 = index n-1 (直近), Day k = index n-1-k
+        # past_base:   Day 40 ~ Day 11 → index [n-41 : n-11] (30要素)
+        # recent_base: Day 10 ~ Day 0  → index [n-11 : n]    (11要素)
+        past_vols = volumes[n - 41: n - 11]
+        recent_vols = volumes[n - 11: n]
+
+        past_base = JQuantsClient._median(past_vols)
+        recent_base = JQuantsClient._median(recent_vols)
+
+        regime_ratio = recent_base / past_base if past_base > 0 else 0
+
+        result["past_base"] = round(past_base)
+        result["recent_base"] = round(recent_base)
+        result["regime_ratio"] = round(regime_ratio, 2)
+
+        # --- 条件A: 水準の底上げ ---
+        if regime_ratio < regime_ratio_min:
+            return False, result
+
+        # --- 条件B: 流動性フィルター ---
+        if recent_base < min_recent_vol:
+            return False, result
+
+        # --- 条件C: 25SMA / 5SMA ---
+        sma25 = JQuantsClient._sma(closes, 25)
+        sma5 = JQuantsClient._sma(closes, 5)
+        result["sma25"] = round(sma25, 1) if sma25 else None
+        result["sma5"] = round(sma5, 1) if sma5 else None
+
+        if sma25 is None or closes[-1] <= sma25:
+            return False, result
+
+        # --- 厳格トレンドフィルター1: 期間リターンがプラス ---
+        # Day 0 close >= Day 10 close
+        day0_close = closes[-1]
+        day10_close = closes[n - 11]
+        period_return_ok = day0_close >= day10_close
+        result["period_return_ok"] = period_return_ok
+        if not period_return_ok:
+            return False, result
+
+        # --- 厳格トレンドフィルター2: 5SMA >= 25SMA ---
+        trend_ok = sma5 is not None and sma5 >= sma25
+        result["trend_ok"] = trend_ok
+        if not trend_ok:
+            return False, result
+
+        # --- 厳格トレンドフィルター3: 最大出来高日が大陰線でない ---
+        recent_10_vols = volumes[n - 11: n]
+        recent_10_opens = opens[n - 11: n]
+        recent_10_closes = closes[n - 11: n]
+        max_vol_idx = recent_10_vols.index(max(recent_10_vols))
+        mv_open = recent_10_opens[max_vol_idx]
+        mv_close = recent_10_closes[max_vol_idx]
+        candle_ok = mv_open <= 0 or mv_close >= mv_open * 0.98
+        result["candle_ok"] = candle_ok
+        if not candle_ok:
+            return False, result
+
+        result["passed"] = True
+        return True, result
 
     def get_volume_breakout_stocks(self, days: int = 20, top_n: int = 20,
                                    target_date: Optional[str] = None,
-                                   vol_ratio_min: float = 1.5,
-                                   price_5d_chg_min: float = 0.0,
+                                   vol_ratio_min: float = 2.0,
+                                   price_5d_chg_min: float = -999.0,
                                    turnover_min: int = 50_000_000,
                                    market: str = '') -> List[Dict]:
         """
-        出来高急増 × 上昇トレンド銘柄を検出
+        出来高レジームチェンジ銘柄を検出。
 
-        - 過去 days 日分の株価データを並列取得
-        - 出来高比率（対象日 ÷ 前5日平均）と株価騰落率でスコアリング
-        - 上位銘柄の6ヶ月日足チャートデータを並列取得して付与
+        中央値ベースで「出来高の水準そのものが底上げされた」銘柄を検出する。
+        1日だけのスパイク（イナゴタワー）は検出しない。
+        下落トレンド中の投げ売りも厳格なトレンドフィルターで排除する。
 
-        Args:
-            days:        スコアリング用ルックバック日数
-            top_n:       上位N銘柄を返す
-            target_date: 対象基準日 (YYYY-MM-DD)。None=最新取引日
-
-        Returns:
-            List[Dict] with extra fields:
-                vol_ratio_5d   : 今日出来高 ÷ 前5日平均出来高
-                price_5d_chg   : 5日間株価騰落率(%)
-                price_10d_chg  : 10日間株価騰落率(%)
-                chart_dates    : 過去6ヶ月の日付リスト (YYYY-MM-DD)
-                chart_prices   : 過去6ヶ月の終値リスト
-                chart_volumes  : 過去6ヶ月の出来高リスト
-                tags           : 特徴タグリスト
+        判定:
+          past_base  = Day40~Day11 (30日間) の出来高中央値
+          recent_base = Day10~Day0 (11日間) の出来高中央値
+          regime_ratio = recent_base / past_base >= 2.0x
+          + 流動性フィルター (recent_base >= 100,000株)
+          + 25SMA上抜け + 5SMA >= 25SMA + 期間リターン正 + 大陰線排除
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
+        import statistics
 
         master = self.get_master()
         if not master:
@@ -419,126 +519,105 @@ class JQuantsClient:
             if item.get("MktNm") != "TOKYO PRO MARKET"
         }
 
-        # ── 1. 過去 days+10 営業日候補を並列フェッチ ──
+        # ── 1. 過去60営業日+余裕分のカレンダー日を並列フェッチ ──
         if target_date:
             base = datetime.strptime(target_date, "%Y-%m-%d")
         else:
             base = datetime.now()
 
+        # 41営業日 + MA25用バッファ → 約90カレンダー日
         candidate_dates = [
             (base - timedelta(days=i)).strftime("%Y-%m-%d")
-            for i in range(0, days + 10)
+            for i in range(0, 90)
         ]
 
-        date_data: Dict[str, Dict] = {}   # date -> {code: price_dict}
+        date_data: Dict[str, Dict] = {}
 
-        def fetch_one(date: str):
-            data = self._fetch_prices_for_date(date)
+        def fetch_one(date_str: str):
+            data = self._fetch_prices_for_date(date_str)
             if data and len(data) > 100:
-                return date, {p["Code"]: p for p in data}
-            return date, None
+                return date_str, {p["Code"]: p for p in data}
+            return date_str, None
 
         with ThreadPoolExecutor(max_workers=6) as ex:
             futures = {ex.submit(fetch_one, d): d for d in candidate_dates}
             for fut in as_completed(futures):
-                date, result = fut.result()
+                d, result = fut.result()
                 if result:
-                    date_data[date] = result
+                    date_data[d] = result
 
-        # 有効な取引日を新しい順にソート
         trading_days = sorted(date_data.keys(), reverse=True)
-        if len(trading_days) < 3:
-            logger.warning("有効な取引日データが不足しています")
+        if len(trading_days) < 41:
+            logger.warning(f"取引日データ不足: {len(trading_days)}日 (41日必要)")
             return []
 
-        # 直近 days 日分に絞る
-        trading_days = trading_days[:days]
-        today_date   = trading_days[0]   # 最新（or 対象）取引日
+        trading_days = trading_days[:65]
+        today_date = trading_days[0]
         today_prices = date_data[today_date]
 
-        # ── 2. 銘柄ごとに指標を計算 ──
+        # ── 2. 銘柄ごとにレジームチェンジ判定 ──
         results = []
 
         for code in valid_codes:
             if code not in today_prices:
                 continue
-
-            # 直近 days 日の終値・出来高を収集（新しい順 → 反転して古い順）
-            closes  = []
-            volumes = []
-            for d in trading_days:
-                p = date_data[d].get(code)
-                if p is None:
-                    continue
-                c = p.get("AdjC") or p.get("C")
-                v = p.get("AdjVo") or p.get("Vo") or 0
-                if c:
-                    closes.append(c)
-                    volumes.append(v)
-
-            if len(closes) < 3:
-                continue
-
-            # 古い順に並べ替え
-            closes  = list(reversed(closes))
-            volumes = list(reversed(volumes))
-
-            today_close    = closes[-1]
-            today_vol      = volumes[-1]
-            today_turnover = today_prices[code].get("Va") or 0
-
-            if today_close == 0:
-                continue
-
-            # ── 週次出来高比率（直近5日平均 ÷ 基準期間平均）──
-            # 直近5日の平均
-            recent_vols = volumes[-5:] if len(volumes) >= 5 else volumes
-            recent_avg  = sum(recent_vols) / len(recent_vols) if recent_vols else 0
-            # 基準期間（6〜20日前）の平均 — 十分なデータがない場合は利用可能な分を使う
-            if len(volumes) >= 10:
-                baseline_vols = volumes[-20:-5] if len(volumes) >= 20 else volumes[:-5]
-            else:
-                baseline_vols = volumes[:-1]  # データ不足時は前日までで代用
-            baseline_avg = sum(baseline_vols) / len(baseline_vols) if baseline_vols else recent_avg or 1
-            vol_ratio    = recent_avg / baseline_avg if baseline_avg > 0 else 0
-
-            # 株価騰落率
-            price_5d_chg  = 0.0
-            price_10d_chg = 0.0
-            if len(closes) >= 6:
-                price_5d_chg  = (today_close - closes[-6]) / closes[-6] * 100
-            elif len(closes) >= 2:
-                price_5d_chg  = (today_close - closes[0]) / closes[0] * 100
-            if len(closes) >= 10:
-                price_10d_chg = (today_close - closes[-11]) / closes[-11] * 100 \
-                    if len(closes) >= 11 else (today_close - closes[0]) / closes[0] * 100
-
-            # 当日変化率（表示用）
-            today_change = 0.0
-            if len(closes) >= 2:
-                prev_close = closes[-2]
-                if prev_close > 0:
-                    today_change = (today_close - prev_close) / prev_close * 100
-
-            # ── フィルター（パラメータ化済み） ──
-            if vol_ratio < vol_ratio_min:
-                continue
-            if price_5d_chg <= price_5d_chg_min:
-                continue
-            if today_turnover < turnover_min:
-                continue
             if market and master_dict.get(code, {}).get("MktNm", "") != market:
                 continue
 
-            # スコア: 週次出来高比率 × 0.5 + 5日騰落率 × 0.5
-            vol_score   = min(vol_ratio / 5.0, 1.0)
-            price_score = min(max(price_5d_chg, 0) / 15.0, 1.0)
-            score       = vol_score * 0.5 + price_score * 0.5
+            opens_arr, highs_arr, lows_arr, closes_arr, volumes_arr = [], [], [], [], []
+            for d in reversed(trading_days):
+                p = date_data[d].get(code)
+                if p is None:
+                    continue
+                o = p.get("AdjO") or p.get("O") or 0
+                h = p.get("AdjH") or p.get("H") or 0
+                l = p.get("AdjL") or p.get("L") or 0
+                c = p.get("AdjC") or p.get("C")
+                v = p.get("AdjVo") or p.get("Vo") or 0
+                if c and c > 0:
+                    opens_arr.append(o)
+                    highs_arr.append(h)
+                    lows_arr.append(l)
+                    closes_arr.append(c)
+                    volumes_arr.append(v)
+
+            if len(closes_arr) < 41:
+                continue
+
+            passed, details = self._detect_regime_change(
+                opens_arr, highs_arr, lows_arr, closes_arr, volumes_arr,
+                regime_ratio_min=vol_ratio_min,
+                min_recent_vol=100_000,
+            )
+
+            if not passed:
+                continue
+
+            today_close = closes_arr[-1]
+            today_vol = volumes_arr[-1]
+            today_turnover = today_prices[code].get("Va") or 0
+
+            if today_turnover < turnover_min:
+                continue
+
+            today_change = 0.0
+            if len(closes_arr) >= 2 and closes_arr[-2] > 0:
+                today_change = (today_close - closes_arr[-2]) / closes_arr[-2] * 100
+
+            price_5d_chg = 0.0
+            if len(closes_arr) >= 6:
+                price_5d_chg = (today_close - closes_arr[-6]) / closes_arr[-6] * 100
+
+            price_10d_chg = 0.0
+            if len(closes_arr) >= 11:
+                price_10d_chg = (today_close - closes_arr[-11]) / closes_arr[-11] * 100
+
+            regime_ratio = details["regime_ratio"]
 
             m = master_dict.get(code, {})
             results.append({
                 "code":           self._normalize_code(code),
-                "_raw_code":      code,   # 5桁コード（チャートデータ取得用）
+                "_raw_code":      code,
                 "name":           m.get("CoName", ""),
                 "market":         m.get("MktNm", ""),
                 "sector":         m.get("S33Nm", ""),
@@ -547,10 +626,13 @@ class JQuantsClient:
                 "volume":         today_vol,
                 "turnover":       today_turnover,
                 "change_rate":    round(today_change, 2),
-                "vol_ratio_5d":   round(vol_ratio, 2),
+                "vol_ratio_5d":   round(regime_ratio, 2),
                 "price_5d_chg":   round(price_5d_chg, 2),
                 "price_10d_chg":  round(price_10d_chg, 2),
-                "_score":         score,
+                "past_base":      details["past_base"],
+                "recent_base":    details["recent_base"],
+                "regime_ratio":   regime_ratio,
+                "_score":         regime_ratio,
             })
 
         if not results:
@@ -560,10 +642,9 @@ class JQuantsClient:
         top = results[:top_n]
 
         # ── 3. 上位銘柄の6ヶ月チャートデータを並列取得 ──
-        today_dt    = datetime.strptime(today_date, "%Y-%m-%d")
-        today_real  = datetime.now().strftime("%Y-%m-%d")
-        chart_from  = (today_dt - timedelta(days=185)).strftime("%Y-%m-%d")
-        # 過去日付指定時はシグナル日以降のパフォーマンスも取得（バックテスト用）
+        today_dt = datetime.strptime(today_date, "%Y-%m-%d")
+        today_real = datetime.now().strftime("%Y-%m-%d")
+        chart_from = (today_dt - timedelta(days=185)).strftime("%Y-%m-%d")
         if today_date < today_real:
             chart_to = min(
                 (today_dt + timedelta(days=35)).strftime("%Y-%m-%d"),
@@ -588,11 +669,10 @@ class JQuantsClient:
                     ]
                     if valid:
                         dates_l, prices_l, vols_l = (list(x) for x in zip(*valid))
-                        s["chart_dates"]   = dates_l
-                        s["chart_prices"]  = prices_l
+                        s["chart_dates"] = dates_l
+                        s["chart_prices"] = prices_l
                         s["chart_volumes"] = vols_l
 
-                        # ── シグナル日インデックス特定 ──
                         sig_idx = -1
                         for i in range(len(dates_l) - 1, -1, -1):
                             if dates_l[i] <= today_date:
@@ -600,14 +680,13 @@ class JQuantsClient:
                                 break
                         s["signal_idx"] = sig_idx
 
-                        # ── 順方向リターン計算 ──
                         if sig_idx >= 0 and sig_idx < len(prices_l):
                             sig_p = prices_l[sig_idx]
-                            def _fwd(n):
-                                idx = sig_idx + n
+                            def _fwd(n_days):
+                                idx = sig_idx + n_days
                                 return round((prices_l[idx] / sig_p - 1) * 100, 2) \
                                     if idx < len(prices_l) and sig_p else None
-                            s["fwd_5d"]  = _fwd(5)
+                            s["fwd_5d"] = _fwd(5)
                             s["fwd_10d"] = _fwd(10)
                             s["fwd_20d"] = _fwd(20)
                         else:
@@ -629,30 +708,29 @@ class JQuantsClient:
         # ── 4. タグ付け ──
         for s in top:
             tags = []
-            vr  = s["vol_ratio_5d"]   # 週次平均出来高比率
-            cr  = s["change_rate"]    # 当日変化率（表示用）
-            va  = s["turnover"]
+            rr = s["regime_ratio"]
+            cr = s["change_rate"]
+            va = s["turnover"]
             mkt = s["market"]
-            p5  = s["price_5d_chg"]
 
-            # 週次出来高増加の強さ
-            if vr >= 4:   tags.append("週次×4↑")
-            elif vr >= 3: tags.append("週次×3↑")
-            elif vr >= 2: tags.append("週次×2↑")
-            else:         tags.append("週次増加")
+            if rr >= 5.0:   tags.append("水準×5↑")
+            elif rr >= 3.0: tags.append("水準×3↑")
+            elif rr >= 2.0: tags.append("水準×2↑")
 
             if cr >= 10:    tags.append("急騰")
-            elif cr >= 5:   tags.append("上昇")
-            else:           tags.append("堅調")
+            elif cr >= 3:   tags.append("上昇")
+            elif cr >= -1:  tags.append("堅調")
+            else:           tags.append("調整中")
 
-            if p5 >= 20:    tags.append("5日+20%↑")
-            elif p5 >= 10:  tags.append("5日+10%↑")
+            rb = s["recent_base"]
+            if rb >= 1_000_000:   tags.append("大出来高")
+            elif rb >= 500_000:   tags.append("中出来高")
 
-            if va >= 10_000_000_000:  tags.append("超大型")
+            if va >= 10_000_000_000: tags.append("超大型")
             elif va >= 1_000_000_000: tags.append("大商い")
 
-            if mkt == "グロース":    tags.append("グロース")
-            elif mkt == "プライム":  tags.append("プライム")
+            if mkt == "グロース":  tags.append("グロース")
+            elif mkt == "プライム": tags.append("プライム")
 
             s["tags"] = tags
 

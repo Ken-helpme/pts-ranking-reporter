@@ -695,13 +695,16 @@ function renderBreakoutCards(stocks) {
     grid.innerHTML = '';
 
     const tagMap = {
+        '水準×5↑':  'btag-vol5',  '水準×3↑':  'btag-vol3',
+        '水準×2↑':  'btag-vol2',
         '週次×4↑':  'btag-vol5',  '週次×3↑':  'btag-vol3',
         '週次×2↑':  'btag-vol2',  '週次増加':  'btag-volinc',
         '急騰':      'btag-surge', '上昇':      'btag-rising',
-        '堅調':      'btag-steady','5日+20%↑':  'btag-p20',
-        '5日+10%↑': 'btag-p10',  '超大型':    'btag-mega',
-        '大商い':    'btag-large', 'プライム':  'btag-prime',
-        'グロース':  'btag-growth',
+        '堅調':      'btag-steady','調整中':    'btag-steady',
+        '大出来高':  'btag-p20',  '中出来高':  'btag-p10',
+        '5日+20%↑': 'btag-p20',  '5日+10%↑': 'btag-p10',
+        '超大型':    'btag-mega',  '大商い':    'btag-large',
+        'プライム':  'btag-prime', 'グロース':  'btag-growth',
     };
 
     stocks.forEach((s, idx) => {
@@ -720,8 +723,8 @@ function renderBreakoutCards(stocks) {
             `<span class="bo-tag ${tagMap[t] || 'btag-def'}">${escHtml(t)}</span>`
         ).join('');
 
-        // 週次出来高比率バー（最大4倍 → 100%）
-        const volPct = Math.min((s.vol_ratio_5d / 4) * 100, 100).toFixed(0);
+        // レジームチェンジ比率バー（最大8倍 → 100%）
+        const volPct = Math.min((s.vol_ratio_5d / 8) * 100, 100).toFixed(0);
 
         // フォワードリターンバッジ
         const fmtFwd = (v, label) => {
@@ -766,7 +769,7 @@ function renderBreakoutCards(stocks) {
                 <span class="bo-change ${crCls}">${crSign}${cr.toFixed(2)}%</span>
             </div>
             <div class="bo-vol-row">
-                <span class="bo-vol-label">週次比</span>
+                <span class="bo-vol-label">水準比</span>
                 <div class="bo-vol-bar-wrap">
                     <div class="bo-vol-bar" style="width:${volPct}%"></div>
                 </div>
