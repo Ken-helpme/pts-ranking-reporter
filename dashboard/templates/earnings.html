@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>決算インパクト分析 | PTSランキング</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/earnings.css?v=20260408a">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+
+    <header class="nav-header">
+        <div class="nav-container">
+            <h1 class="nav-title">📊 PTSランキング</h1>
+            <nav class="nav-links">
+                <a href="/" class="nav-link">📊 PTSランキング</a>
+                <a href="/trending" class="nav-link">🔥 話題株</a>
+                <a href="/screening" class="nav-link">🔍 スクリーニング</a>
+                <a href="/signals" class="nav-link">📡 シグナル監視</a>
+                <a href="/earnings" class="nav-link active">📈 決算インパクト</a>
+                <a href="/quant" class="nav-link">🧪 クオンツ分析</a>
+            </nav>
+        </div>
+    </header>
+
+    <div class="earnings-page">
+
+        <!-- Tab Bar -->
+        <div class="tab-bar">
+            <button class="tab-btn active" data-tab="impact">決算インパクト分析</button>
+            <button class="tab-btn" data-tab="revision">上方修正先回り（準備中）</button>
+        </div>
+
+        <!-- Tab: 決算インパクト分析 -->
+        <div class="tab-content active" id="tab-impact">
+
+            <div class="earnings-controls">
+                <div class="control-group">
+                    <label for="earningsDate">発表日</label>
+                    <input type="date" id="earningsDate">
+                </div>
+                <div class="control-group">
+                    <label class="toggle-label">
+                        <input type="checkbox" id="sRankOnly">
+                        <span class="toggle-text">S級のみ表示</span>
+                    </label>
+                </div>
+                <button class="btn-fetch" id="btnFetch" onclick="loadEarningsImpact()">取得</button>
+            </div>
+
+            <div class="earnings-summary" id="earningsSummary" style="display:none;">
+                <span class="summary-date" id="summaryDate"></span>
+                <span class="summary-total" id="summaryTotal"></span>
+                <span class="rank-badge rank-s" id="countS"></span>
+                <span class="rank-badge rank-a" id="countA"></span>
+                <span class="rank-badge rank-b" id="countB"></span>
+                <span class="rank-badge rank-c" id="countC"></span>
+            </div>
+
+            <div class="loading-overlay" id="loadingOverlay" style="display:none;">
+                <div class="spinner"></div>
+                <p>決算データを取得・分析中…<br><small>銘柄数が多い場合は1〜2分かかります</small></p>
+            </div>
+
+            <div class="earnings-empty" id="earningsEmpty">
+                日付を選択して「取得」をクリックしてください。
+            </div>
+
+            <div class="table-wrap" id="tableWrap" style="display:none;">
+                <table class="earnings-table" id="earningsTable">
+                    <thead>
+                        <tr>
+                            <th>コード</th>
+                            <th>銘柄名</th>
+                            <th>ランク</th>
+                            <th>単Q売上成長率</th>
+                            <th>単Q営業益成長率</th>
+                            <th>進捗率</th>
+                            <th>時価総額</th>
+                            <th>四半期</th>
+                        </tr>
+                    </thead>
+                    <tbody id="earningsBody"></tbody>
+                </table>
+            </div>
+
+            <p class="disclaimer">※ 本情報は投資助言ではありません。投資判断はご自身の責任で行ってください。</p>
+        </div>
+
+        <!-- Tab: 上方修正先回り -->
+        <div class="tab-content" id="tab-revision">
+            <div class="placeholder-box">
+                <p>上方修正先回りスクリーニングは今後実装予定です。</p>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="/static/js/earnings.js?v=20260408a"></script>
+</body>
+</html>

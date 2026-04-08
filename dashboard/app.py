@@ -894,6 +894,30 @@ try:
 except ImportError:
     pass
 
+
+# ========== 決算インパクト分析 ==========
+
+@app.route('/earnings')
+def earnings_page():
+    """決算インパクト分析ページ"""
+    return render_template('earnings.html')
+
+
+@app.route('/api/earnings/impact')
+def earnings_impact():
+    """指定日の決算発表銘柄をスコアリングして返す"""
+    try:
+        date = request.args.get('date', datetime.now().strftime('%Y-%m-%d'))
+        result = jquants.get_earnings_impact(date)
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
+
+# ========== クオンツ分析 ==========
+
 _quant_jobs: dict = {}  # job_id -> {status, logs, current_step, progress, report, error}
 
 @app.route('/quant')

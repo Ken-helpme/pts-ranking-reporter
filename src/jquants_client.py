@@ -159,6 +159,225 @@ class JQuantsClient:
         result = self._get("/fins/statements", {"code": code})
         return result.get("data", [])
 
+    def get_earnings_announcements(self, date: str) -> List[Dict]:
+        """指定日に決算発表があった銘柄リストを取得"""
+        result = self._get("/fins/announcement", {"date": date})
+        return result.get("data", [])
+
+    # ========== 決算インパクト分析 ==========
+
+    @staticmethod
+    def _quarter_order(q_type: str) -> int:
+        return {'1Q': 1, 'HY': 2, '3Q': 3, 'FY': 4}.get(q_type, 0)
+
+    @staticmethod
+    def _prev_quarter_type(q_type: str) -> Optional[str]:
+        return {'HY': '1Q', '3Q': 'HY', 'FY': '3Q'}.get(q_type)
+
+    @staticmethod
+    def _safe_float(val) -> Optional[float]:
+        if val is None or val == '':
+            return None
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return None
+
+    def _calc_single_quarter(self, statements: List[Dict], target: Dict) -> Optional[Dict]:
+        """
+        累計値から単四半期の売上高・営業利益を算出する。
+        target: 対象となる statements レコード。
+        1Qなら累計=単Q。2Q以降は前Qの累計を引く。
+        """
+        q_type = target.get('TypeOfCurrentPeriod', '')
+        fy_start = target.get('CurrentFiscalYearStartDate', '')
+
+        cum_sales = self._safe_float(target.get('NetSales'))
+        cum_op = self._safe_float(target.get('OperatingProfit'))
+
+        if cum_sales is None and cum_op is None:
+            return None
+
+        if q_type == '1Q':
+            return {'sales': cum_sales, 'op': cum_op}
+
+        prev_qt = self._prev_quarter_type(q_type)
+        if not prev_qt:
+            return {'sales': cum_sales, 'op': cum_op}
+
+        prev = None
+        for s in statements:
+            if (s.get('TypeOfCurrentPeriod') == prev_qt
+                    and s.get('CurrentFiscalYearStartDate') == fy_start):
+                prev = s
+                break
+
+        if not prev:
+            return {'sales': cum_sales, 'op': cum_op}
+
+        prev_sales = self._safe_float(prev.get('NetSales'))
+        prev_op = self._safe_float(prev.get('OperatingProfit'))
+
+        single_sales = (cum_sales - prev_sales) if cum_sales is not None and prev_sales is not None else cum_sales
+        single_op = (cum_op - prev_op) if cum_op is not None and prev_op is not None else cum_op
+
+        return {'sales': single_sales, 'op': single_op}
+
+    def _find_yoy_target(self, statements: List[Dict], current: Dict) -> Optional[Dict]:
+        """現在の決算に対応する前年同期のレコードを探す。"""
+        q_type = current.get('TypeOfCurrentPeriod', '')
+        fy_start = current.get('CurrentFiscalYearStartDate', '')
+        if not fy_start or len(fy_start) < 4:
+            return None
+
+        try:
+            fy_start_dt = datetime.strptime(fy_start, '%Y-%m-%d')
+            prev_fy_start = (fy_start_dt - timedelta(days=370)).strftime('%Y-')
+        except ValueError:
+            return None
+
+        prev_year_str = str(int(fy_start[:4]) - 1)
+
+        for s in statements:
+            s_fy = s.get('CurrentFiscalYearStartDate', '')
+            if (s.get('TypeOfCurrentPeriod') == q_type
+                    and s_fy.startswith(prev_year_str)):
+                return s
+        return None
+
+    def get_earnings_impact(self, date: str) -> Dict:
+        """
+        指定日の決算発表銘柄について単四半期YoY成長率を算出・ランク付けする。
+
+        Returns: {
+            'date': str,
+            'stocks': [{code, name, rank, sales_yoy, op_yoy, progress, market_cap, ...}, ...],
+            'total': int,
+            'counts': {S: n, A: n, B: n, C: n}
+        }
+        """
+        announcements = self.get_earnings_announcements(date)
+        if not announcements:
+            return {'date': date, 'stocks': [], 'total': 0,
+                    'counts': {'S': 0, 'A': 0, 'B': 0, 'C': 0}}
+
+        master = self.get_master()
+        master_dict = {}
+        for m in master:
+            c = m.get('Code', '')
+            master_dict[c] = m
+            if len(c) == 5 and c.endswith('0'):
+                master_dict[c[:-1]] = m
+
+        latest_prices = self.get_latest_prices(date=date)
+        price_map = {}
+        for p in latest_prices:
+            c = p.get('Code', '')
+            price_map[c] = p
+            if len(c) == 5 and c.endswith('0'):
+                price_map[c[:-1]] = p
+
+        results = []
+        for ann in announcements:
+            code = ann.get('Code', '')
+            code4 = code[:-1] if len(code) == 5 and code.endswith('0') else code
+
+            try:
+                stmts = self.get_financial_statements(code)
+                time.sleep(0.3)
+            except Exception as e:
+                logger.warning(f"[{code4}] statements取得失敗: {e}")
+                continue
+
+            if not stmts:
+                continue
+
+            stmts_sorted = sorted(
+                stmts,
+                key=lambda s: (
+                    s.get('CurrentFiscalYearStartDate', ''),
+                    self._quarter_order(s.get('TypeOfCurrentPeriod', '')),
+                ),
+            )
+
+            current = stmts_sorted[-1]
+            q_type = current.get('TypeOfCurrentPeriod', '')
+
+            current_sq = self._calc_single_quarter(stmts_sorted, current)
+            if not current_sq:
+                continue
+
+            yoy_target = self._find_yoy_target(stmts_sorted, current)
+            sales_yoy = None
+            op_yoy = None
+
+            if yoy_target:
+                prev_sq = self._calc_single_quarter(stmts_sorted, yoy_target)
+                if prev_sq:
+                    if prev_sq['sales'] and prev_sq['sales'] > 0 and current_sq['sales'] is not None:
+                        sales_yoy = round((current_sq['sales'] / prev_sq['sales'] - 1) * 100, 1)
+                    if prev_sq['op'] and prev_sq['op'] > 0 and current_sq['op'] is not None:
+                        op_yoy = round((current_sq['op'] / prev_sq['op'] - 1) * 100, 1)
+
+            # Progress rate
+            progress = None
+            cum_ord = self._safe_float(current.get('OrdinaryProfit'))
+            forecast_ord = self._safe_float(current.get('ForecastOrdinaryProfit'))
+            if cum_ord is not None and forecast_ord and forecast_ord > 0:
+                progress = round(cum_ord / forecast_ord * 100, 1)
+
+            # Rank
+            if (sales_yoy is not None and sales_yoy >= 20
+                    and op_yoy is not None and op_yoy >= 30):
+                rank = 'S'
+            elif op_yoy is not None and op_yoy >= 20:
+                rank = 'A'
+            elif op_yoy is not None and op_yoy >= 10:
+                rank = 'B'
+            else:
+                rank = 'C'
+
+            # Market cap
+            m_info = master_dict.get(code, master_dict.get(code4, {}))
+            name = m_info.get('CoName', ann.get('CompanyName', ''))
+            shares = self._safe_float(m_info.get('NumberOfIssuedShares'))
+            p_info = price_map.get(code, price_map.get(code4, {}))
+            close = self._safe_float(p_info.get('AdjC') or p_info.get('C'))
+            market_cap = None
+            if shares and close:
+                market_cap = round(shares * close)
+
+            results.append({
+                'code': code4,
+                'name': name,
+                'sector': m_info.get('S33Nm', ''),
+                'market': m_info.get('MktNm', ''),
+                'q_type': q_type,
+                'rank': rank,
+                'sales_yoy': sales_yoy,
+                'op_yoy': op_yoy,
+                'progress': progress,
+                'market_cap': market_cap,
+                'close': close,
+            })
+
+        rank_order = {'S': 0, 'A': 1, 'B': 2, 'C': 3}
+        results.sort(key=lambda r: (
+            rank_order.get(r['rank'], 9),
+            -(r['op_yoy'] or -9999),
+        ))
+
+        counts = {'S': 0, 'A': 0, 'B': 0, 'C': 0}
+        for r in results:
+            counts[r['rank']] = counts.get(r['rank'], 0) + 1
+
+        return {
+            'date': date,
+            'stocks': results,
+            'total': len(results),
+            'counts': counts,
+        }
+
     # ========== スクリーニング ==========
 
     def _normalize_code(self, code: str) -> str:
