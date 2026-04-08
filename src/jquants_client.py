@@ -155,24 +155,19 @@ class JQuantsClient:
         return result.get("data", [])
 
     def get_financial_statements(self, code: str) -> List[Dict]:
-        """詳細決算データ取得"""
-        result = self._get("/fins/statements", {"code": code})
+        """詳細決算データ取得 (V2: /fins/details)"""
+        result = self._get("/fins/details", {"code": code})
         return result.get("data", [])
 
     def get_earnings_announcements(self, date: str) -> List[Dict]:
-        """指定日に決算発表があった銘柄リストを取得"""
-        result = self._get("/fins/announcement", {"date": date})
+        """指定日付近に決算発表がある銘柄リストを取得（V2: /equities/earnings-calendar）"""
+        result = self._get("/equities/earnings-calendar", {"date": date})
         return result.get("data", [])
 
     # ========== 決算インパクト分析 ==========
 
-    @staticmethod
-    def _quarter_order(q_type: str) -> int:
-        return {'1Q': 1, 'HY': 2, '3Q': 3, 'FY': 4}.get(q_type, 0)
-
-    @staticmethod
-    def _prev_quarter_type(q_type: str) -> Optional[str]:
-        return {'HY': '1Q', '3Q': 'HY', 'FY': '3Q'}.get(q_type)
+    _Q_ORDER = {'1Q': 1, '2Q': 2, 'HY': 2, '3Q': 3, 'FY': 4}
+    _PREV_Q = {'2Q': '1Q', 'HY': '1Q', '3Q': '2Q', 'FY': '3Q'}
 
     @staticmethod
     def _safe_float(val) -> Optional[float]:
@@ -183,17 +178,17 @@ class JQuantsClient:
         except (ValueError, TypeError):
             return None
 
-    def _calc_single_quarter(self, statements: List[Dict], target: Dict) -> Optional[Dict]:
+    def _calc_single_quarter(self, records: List[Dict], target: Dict) -> Optional[Dict]:
         """
-        累計値から単四半期の売上高・営業利益を算出する。
-        target: 対象となる statements レコード。
+        V2 fins/summary の累計値から単四半期の売上高・営業利益を算出。
         1Qなら累計=単Q。2Q以降は前Qの累計を引く。
+        V2 field names: Sales, OP, CurPerType, CurFYSt
         """
-        q_type = target.get('TypeOfCurrentPeriod', '')
-        fy_start = target.get('CurrentFiscalYearStartDate', '')
+        q_type = target.get('CurPerType', '')
+        fy_start = target.get('CurFYSt', '')
 
-        cum_sales = self._safe_float(target.get('NetSales'))
-        cum_op = self._safe_float(target.get('OperatingProfit'))
+        cum_sales = self._safe_float(target.get('Sales'))
+        cum_op = self._safe_float(target.get('OP'))
 
         if cum_sales is None and cum_op is None:
             return None
@@ -201,132 +196,113 @@ class JQuantsClient:
         if q_type == '1Q':
             return {'sales': cum_sales, 'op': cum_op}
 
-        prev_qt = self._prev_quarter_type(q_type)
+        prev_qt = self._PREV_Q.get(q_type)
         if not prev_qt:
             return {'sales': cum_sales, 'op': cum_op}
 
         prev = None
-        for s in statements:
-            if (s.get('TypeOfCurrentPeriod') == prev_qt
-                    and s.get('CurrentFiscalYearStartDate') == fy_start):
+        for s in records:
+            if (s.get('CurPerType') == prev_qt
+                    and s.get('CurFYSt') == fy_start
+                    and self._safe_float(s.get('Sales')) is not None):
                 prev = s
                 break
 
         if not prev:
             return {'sales': cum_sales, 'op': cum_op}
 
-        prev_sales = self._safe_float(prev.get('NetSales'))
-        prev_op = self._safe_float(prev.get('OperatingProfit'))
+        prev_sales = self._safe_float(prev.get('Sales'))
+        prev_op = self._safe_float(prev.get('OP'))
 
         single_sales = (cum_sales - prev_sales) if cum_sales is not None and prev_sales is not None else cum_sales
         single_op = (cum_op - prev_op) if cum_op is not None and prev_op is not None else cum_op
 
         return {'sales': single_sales, 'op': single_op}
 
-    def _find_yoy_target(self, statements: List[Dict], current: Dict) -> Optional[Dict]:
-        """現在の決算に対応する前年同期のレコードを探す。"""
-        q_type = current.get('TypeOfCurrentPeriod', '')
-        fy_start = current.get('CurrentFiscalYearStartDate', '')
+    def _find_yoy_target(self, records: List[Dict], current: Dict) -> Optional[Dict]:
+        """前年同期の決算レコードを探す。CurFYSt を1年前にずらして同じ CurPerType を検索。"""
+        q_type = current.get('CurPerType', '')
+        fy_start = current.get('CurFYSt', '')
         if not fy_start or len(fy_start) < 4:
-            return None
-
-        try:
-            fy_start_dt = datetime.strptime(fy_start, '%Y-%m-%d')
-            prev_fy_start = (fy_start_dt - timedelta(days=370)).strftime('%Y-')
-        except ValueError:
             return None
 
         prev_year_str = str(int(fy_start[:4]) - 1)
 
-        for s in statements:
-            s_fy = s.get('CurrentFiscalYearStartDate', '')
-            if (s.get('TypeOfCurrentPeriod') == q_type
-                    and s_fy.startswith(prev_year_str)):
+        for s in records:
+            s_fy = s.get('CurFYSt', '')
+            if (s.get('CurPerType') == q_type
+                    and s_fy.startswith(prev_year_str)
+                    and self._safe_float(s.get('Sales')) is not None):
                 return s
         return None
 
     def get_earnings_impact(self, date: str) -> Dict:
         """
         指定日の決算発表銘柄について単四半期YoY成長率を算出・ランク付けする。
-
-        Returns: {
-            'date': str,
-            'stocks': [{code, name, rank, sales_yoy, op_yoy, progress, market_cap, ...}, ...],
-            'total': int,
-            'counts': {S: n, A: n, B: n, C: n}
-        }
+        J-Quants V2 API を使用。
         """
         announcements = self.get_earnings_announcements(date)
-        if not announcements:
+        target_date_anns = [a for a in announcements if a.get('Date', '') == date]
+        if not target_date_anns:
+            target_date_anns = announcements
+
+        if not target_date_anns:
             return {'date': date, 'stocks': [], 'total': 0,
                     'counts': {'S': 0, 'A': 0, 'B': 0, 'C': 0}}
 
-        master = self.get_master()
-        master_dict = {}
-        for m in master:
-            c = m.get('Code', '')
-            master_dict[c] = m
-            if len(c) == 5 and c.endswith('0'):
-                master_dict[c[:-1]] = m
-
-        latest_prices = self.get_latest_prices(date=date)
-        price_map = {}
-        for p in latest_prices:
-            c = p.get('Code', '')
-            price_map[c] = p
-            if len(c) == 5 and c.endswith('0'):
-                price_map[c[:-1]] = p
+        actual_date = target_date_anns[0].get('Date', date)
 
         results = []
-        for ann in announcements:
+        for ann in target_date_anns:
             code = ann.get('Code', '')
             code4 = code[:-1] if len(code) == 5 and code.endswith('0') else code
 
             try:
-                stmts = self.get_financial_statements(code)
+                stmts = self.get_financial_summary(code)
                 time.sleep(0.3)
             except Exception as e:
-                logger.warning(f"[{code4}] statements取得失敗: {e}")
+                logger.warning(f"[{code4}] summary取得失敗: {e}")
                 continue
 
-            if not stmts:
+            valid = [s for s in stmts
+                     if self._safe_float(s.get('Sales')) is not None
+                     and s.get('CurPerType', '') in self._Q_ORDER]
+            if not valid:
                 continue
 
-            stmts_sorted = sorted(
-                stmts,
-                key=lambda s: (
-                    s.get('CurrentFiscalYearStartDate', ''),
-                    self._quarter_order(s.get('TypeOfCurrentPeriod', '')),
-                ),
-            )
+            valid.sort(key=lambda s: (
+                s.get('CurFYSt', ''),
+                self._Q_ORDER.get(s.get('CurPerType', ''), 0),
+            ))
 
-            current = stmts_sorted[-1]
-            q_type = current.get('TypeOfCurrentPeriod', '')
+            current = valid[-1]
+            q_type = current.get('CurPerType', '')
 
-            current_sq = self._calc_single_quarter(stmts_sorted, current)
+            current_sq = self._calc_single_quarter(valid, current)
             if not current_sq:
                 continue
 
-            yoy_target = self._find_yoy_target(stmts_sorted, current)
+            yoy_target = self._find_yoy_target(valid, current)
             sales_yoy = None
             op_yoy = None
 
             if yoy_target:
-                prev_sq = self._calc_single_quarter(stmts_sorted, yoy_target)
+                prev_sq = self._calc_single_quarter(valid, yoy_target)
                 if prev_sq:
                     if prev_sq['sales'] and prev_sq['sales'] > 0 and current_sq['sales'] is not None:
                         sales_yoy = round((current_sq['sales'] / prev_sq['sales'] - 1) * 100, 1)
                     if prev_sq['op'] and prev_sq['op'] > 0 and current_sq['op'] is not None:
                         op_yoy = round((current_sq['op'] / prev_sq['op'] - 1) * 100, 1)
 
-            # Progress rate
             progress = None
-            cum_ord = self._safe_float(current.get('OrdinaryProfit'))
-            forecast_ord = self._safe_float(current.get('ForecastOrdinaryProfit'))
-            if cum_ord is not None and forecast_ord and forecast_ord > 0:
-                progress = round(cum_ord / forecast_ord * 100, 1)
+            cum_odp = self._safe_float(current.get('OdP'))
+            forecast_odp = self._safe_float(current.get('FOdP'))
+            if not forecast_odp:
+                forecast_odp = self._safe_float(current.get('FOP'))
+                cum_odp = self._safe_float(current.get('OP')) if not cum_odp else cum_odp
+            if cum_odp is not None and forecast_odp and forecast_odp > 0:
+                progress = round(cum_odp / forecast_odp * 100, 1)
 
-            # Rank
             if (sales_yoy is not None and sales_yoy >= 20
                     and op_yoy is not None and op_yoy >= 30):
                 rank = 'S'
@@ -337,28 +313,18 @@ class JQuantsClient:
             else:
                 rank = 'C'
 
-            # Market cap
-            m_info = master_dict.get(code, master_dict.get(code4, {}))
-            name = m_info.get('CoName', ann.get('CompanyName', ''))
-            shares = self._safe_float(m_info.get('NumberOfIssuedShares'))
-            p_info = price_map.get(code, price_map.get(code4, {}))
-            close = self._safe_float(p_info.get('AdjC') or p_info.get('C'))
-            market_cap = None
-            if shares and close:
-                market_cap = round(shares * close)
-
             results.append({
                 'code': code4,
-                'name': name,
-                'sector': m_info.get('S33Nm', ''),
-                'market': m_info.get('MktNm', ''),
+                'name': ann.get('CoName', ''),
+                'sector': ann.get('SectorNm', ''),
+                'market': ann.get('Section', ''),
                 'q_type': q_type,
                 'rank': rank,
                 'sales_yoy': sales_yoy,
                 'op_yoy': op_yoy,
                 'progress': progress,
-                'market_cap': market_cap,
-                'close': close,
+                'market_cap': None,
+                'close': None,
             })
 
         rank_order = {'S': 0, 'A': 1, 'B': 2, 'C': 3}
@@ -372,7 +338,7 @@ class JQuantsClient:
             counts[r['rank']] = counts.get(r['rank'], 0) + 1
 
         return {
-            'date': date,
+            'date': actual_date,
             'stocks': results,
             'total': len(results),
             'counts': counts,
