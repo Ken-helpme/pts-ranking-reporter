@@ -151,6 +151,15 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
         lambda x: x.rolling(5, min_periods=3).median())
     df['vol_ultra_early_shift'] = df['vol_med_5'] / df['vol_med_60_prev'].replace(0, np.nan)
 
+    # ── Surge ratio (スクリーニングと同一ロジック) ────────────────────
+    # past_base:    Day 40 ~ Day 5 (35日間) の中央値
+    # recent_surge: Day 2 ~ Day 0  (直近3日)  の平均値
+    vol_past_35 = g['Volume'].shift(5).groupby(df['CodeStr']).transform(
+        lambda x: x.rolling(35, min_periods=25).median())
+    vol_recent_3 = g['Volume'].transform(
+        lambda x: x.rolling(3, min_periods=3).mean())
+    df['vol_surge_3d'] = vol_recent_3 / vol_past_35.replace(0, np.nan)
+
     # Legacy vol_above_count_20d (used for display in the table)
     if 'vol_above_count_20d' not in df.columns:
         df['vol_above_count_20d'] = df['vol_above_baseline_count']
@@ -192,13 +201,11 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def compute_signals(df: pd.DataFrame, etf_codes: set, growing_codes: set) -> pd.Series:
     """
-    出来高サージ × パーフェクトオーダー。
-    直近出来高が過去水準の2.5倍以上、かつ
-    終値 > 5SMA > 25SMA > 75SMA の完全上昇配列。
+    出来高サージ(3日平均/35日中央値 >= 2.5x) × パーフェクトオーダー。
+    スクリーニングページと完全に同一の検知ロジック。
     """
     return (
-        (df['vol_baseline_shift'] >= 2.5) &
-        (df['vol_above_baseline_count'] >= 10) &
+        (df['vol_surge_3d'] >= 2.5) &
         (df['Close'] > df['ma5']) &
         (df['ma5'] > df['ma25']) &
         (df['ma25'] > df['ma75']) &
@@ -212,11 +219,12 @@ def compute_signals(df: pd.DataFrame, etf_codes: set, growing_codes: set) -> pd.
 def compute_ultra_early_signals(df: pd.DataFrame, etf_codes: set,
                                  growing_codes: set) -> pd.Series:
     """
-    超初動シグナル: 5日中央値が急上昇 + パーフェクトオーダー。
-    メインシグナルより閾値を緩くし、初動1週目を捕捉する。
+    超初動シグナル: サージ比 1.8x〜2.5x + パーフェクトオーダー。
+    メインシグナルの手前で初動1週目を捕捉する。
     """
     return (
-        (df['vol_ultra_early_shift'] >= 1.8) &
+        (df['vol_surge_3d'] >= 1.8) &
+        (df['vol_surge_3d'] < 2.5) &
         (df['Close'] > df['ma5']) &
         (df['ma5'] > df['ma25']) &
         (df['ma25'] > df['ma75']) &
@@ -231,12 +239,12 @@ def compute_ultra_early_signals(df: pd.DataFrame, etf_codes: set,
 def compute_accel_signals(df: pd.DataFrame, etf_codes: set,
                           growing_codes: set) -> pd.Series:
     """
-    出来高加速シグナル: baseline shift 3.5x超 + パーフェクトオーダー。
+    出来高加速シグナル: サージ比 5.0x超 + パーフェクトオーダー。
     メインと超初動の両方に引っかからなかった銘柄のうち、
     出来高が極端に急増したものを拾う。
     """
     return (
-        (df['vol_baseline_shift'] >= 3.5) &
+        (df['vol_surge_3d'] >= 5.0) &
         (df['Close'] > df['ma5']) &
         (df['ma5'] > df['ma25']) &
         (df['ma25'] > df['ma75']) &
@@ -326,22 +334,22 @@ def get_signal_stocks(data_dir: Optional[str] = None, force: bool = False) -> di
     latest_date = all_dates[-1]
     latest_date_str = pd.Timestamp(latest_date).strftime('%Y-%m-%d')
 
-    # Current signal codes
+    # Current signal codes (latest date only)
     current_mask = (df['Date'] == latest_date) & df['_signal']
     current_codes = set(df.loc[current_mask, 'CodeStr'])
 
-    # First signal date per stock (across all history)
-    sig_df = df[df['_signal']].copy()
+    # First signal date per stock — 直近3営業日のみ参照（古い検知日を排除）
+    recent_3d = set(all_dates[-3:]) if len(all_dates) >= 3 else set(all_dates)
+    sig_df = df[df['_signal'] & df['Date'].isin(recent_3d)].copy()
     first_signal = sig_df.groupby('CodeStr')['Date'].min().to_dict()
 
-    # VB start price: close on the first day vol_base_ratio exceeded 1.3x
-    # within the recent lookback (last 60 trading days) to stay relevant
-    lookback_dates = set(all_dates[-60:]) if len(all_dates) >= 60 else set(all_dates)
-    vb_cross = df[(df['vol_base_ratio'] >= 1.3) & (df['Date'].isin(lookback_dates))].sort_values('Date')
+    # VB start price: 直近3営業日でサージ比 >= 2.0 になった最初の日
+    _vb_col = 'vol_surge_3d' if 'vol_surge_3d' in df.columns else 'vol_base_ratio'
+    vb_cross = df[(df[_vb_col] >= 2.0) & df['Date'].isin(recent_3d)].sort_values('Date')
     vb_first = vb_cross.groupby('CodeStr').first()
-    vb_start_price_map = vb_first['Close'].to_dict()
+    vb_start_price_map = vb_first['Close'].to_dict() if not vb_first.empty else {}
     vb_start_date_map = {c: pd.Timestamp(d).strftime('%Y-%m-%d')
-                         for c, d in vb_first['Date'].to_dict().items()}
+                         for c, d in vb_first['Date'].to_dict().items()} if not vb_first.empty else {}
 
     # Continuous signal days: count consecutive trailing True from latest date
     signal_streak_map = {}
@@ -357,19 +365,20 @@ def get_signal_stocks(data_dir: Optional[str] = None, force: bool = False) -> di
                     break
             signal_streak_map[code] = streak
 
-    # Last-N trading-day sets
+    # Category: first_signal は直近3日に限定済みなので、
+    # latest_date = 新規, それ以外 = 継続 としてシンプルに分類
     last_5 = set(all_dates[-5:])
     last_10 = set(all_dates[-10:])
 
     new_5d, recent_10d, continuing = [], [], []
     for code in current_codes:
-        fs = first_signal.get(code)
-        if fs in last_5:
+        fs = first_signal.get(code, latest_date)
+        if fs == latest_date:
             new_5d.append(code)
-        elif fs in last_10:
+        elif fs in recent_3d:
             recent_10d.append(code)
         else:
-            continuing.append(code)
+            new_5d.append(code)
 
     # Signal dates per stock (last 10 trading days, for display)
     recent_sigs = df[(df['Date'].isin(last_10)) & df['_signal']]
