@@ -16,7 +16,8 @@ from models import (init_db, save_pts_data, get_latest_ranking, get_historical_d
                      get_statistics, save_trending_stocks, get_trending_stocks,
                      get_trending_dates, save_optimization_result, get_latest_optimization,
                      save_auto_optimization_log, get_auto_optimization_history,
-                     save_signal_history, get_signal_history)
+                     save_signal_history, get_signal_history,
+                     clear_signal_history)
 from trending_stock_fetcher import TrendingStockFetcher
 from scraper import KabutanScraper
 from analyzer import PTSAnalyzer
@@ -760,6 +761,53 @@ def signals_refresh():
         if 'error' in result:
             return jsonify({'success': False, 'error': result['error']})
         return jsonify({'success': True, **result})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/signals/reset', methods=['POST'])
+def signals_reset():
+    """signal_history を全削除 → キャッシュクリア → 最新ロジックで再検知。"""
+    try:
+        deleted = clear_signal_history()
+        from signal_monitor import get_signal_stocks, _cached_result
+        _cached_result['data'] = None
+        _cached_result['ts'] = 0
+        data_dir = os.path.join(_base, '..', 'quant_research', 'data')
+        result = get_signal_stocks(data_dir, force=True)
+        if 'error' in result:
+            return jsonify({'success': False, 'error': result['error'],
+                            'deleted_rows': deleted})
+
+        all_sigs = result.get('all_signals', [])
+        if all_sigs:
+            db_records = []
+            for s in all_sigs:
+                db_records.append({
+                    'code_full': s.get('code_full', s.get('code', '')),
+                    'name': s.get('name', ''),
+                    'sector': s.get('sector', ''),
+                    'signal_date': result['latest_date'],
+                    'close': s.get('close'),
+                    'vol_base_ratio': s.get('vol_base_ratio'),
+                    'vol_above_count': s.get('vol_above_count'),
+                    'turnover_avg': s.get('turnover_avg'),
+                    'rsi': s.get('rsi'),
+                    'ma25_dev': s.get('ma25_dev'),
+                    'op_growth': s.get('op_growth'),
+                    'eps_growth': s.get('eps_growth'),
+                    'first_detected': s.get('first_detected', ''),
+                })
+            save_signal_history(db_records)
+
+        return jsonify({
+            'success': True,
+            'deleted_rows': deleted,
+            'new_signals': len(all_sigs),
+            'latest_date': result.get('latest_date', ''),
+        })
     except Exception as e:
         import traceback
         traceback.print_exc()

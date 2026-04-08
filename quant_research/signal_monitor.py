@@ -192,21 +192,19 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def compute_signals(df: pd.DataFrame, etf_codes: set, growing_codes: set) -> pd.Series:
     """
-    Baseline-shift detection: the median volume level of the recent 20 days
-    is significantly higher than the median of the prior 60 days, with
-    sustained consistency (>=10 of 20 days above the old median).
+    出来高サージ × パーフェクトオーダー。
+    直近出来高が過去水準の2.5倍以上、かつ
+    終値 > 5SMA > 25SMA > 75SMA の完全上昇配列。
     """
     return (
-        (df['vol_baseline_shift'] >= 1.5) &
+        (df['vol_baseline_shift'] >= 2.5) &
         (df['vol_above_baseline_count'] >= 10) &
-        (df['ma25_dev'].abs() <= 10) &
-        (df['rsi'] <= 65) &
-        (df['pct_from_50d_high'] >= -0.10) &
+        (df['Close'] > df['ma5']) &
+        (df['ma5'] > df['ma25']) &
+        (df['ma25'] > df['ma75']) &
         (~df['price_frozen_5d']) &
-        (df['turnover_avg_20'] >= 3e8) &
+        (df['turnover_avg_20'] >= 1e8) &
         (~df['CodeStr'].isin(etf_codes)) &
-        (df['ma25_slope'] >= 0) &
-        (df['Close'] >= df['ma75']) &
         (df['CodeStr'].isin(growing_codes))
     )
 
@@ -214,14 +212,14 @@ def compute_signals(df: pd.DataFrame, etf_codes: set, growing_codes: set) -> pd.
 def compute_ultra_early_signals(df: pd.DataFrame, etf_codes: set,
                                  growing_codes: set) -> pd.Series:
     """
-    Ultra-early baseline shift (超初動シグナル).
-    5-day median volume (excl today) vs prior 60-day median >= 1.8x.
-    Catches the very first week of a baseline shift.
+    超初動シグナル: 5日中央値が急上昇 + パーフェクトオーダー。
+    メインシグナルより閾値を緩くし、初動1週目を捕捉する。
     """
     return (
         (df['vol_ultra_early_shift'] >= 1.8) &
-        (df['daily_ret'] >= -0.03) &
-        (df['pct_from_50d_high'] >= -0.05) &
+        (df['Close'] > df['ma5']) &
+        (df['ma5'] > df['ma25']) &
+        (df['ma25'] > df['ma75']) &
         (~df['price_frozen_5d']) &
         (df['turnover_avg_20'] >= 1e8) &
         (~df['CodeStr'].isin(etf_codes)) &
@@ -233,14 +231,15 @@ def compute_ultra_early_signals(df: pd.DataFrame, etf_codes: set,
 def compute_accel_signals(df: pd.DataFrame, etf_codes: set,
                           growing_codes: set) -> pd.Series:
     """
-    Volume acceleration signal (出来高加速シグナル).
-    Fires when the baseline shift ratio crosses 2.5x (strong sustained increase)
-    but the main signal didn't fire (e.g. price filters excluded it).
+    出来高加速シグナル: baseline shift 3.5x超 + パーフェクトオーダー。
+    メインと超初動の両方に引っかからなかった銘柄のうち、
+    出来高が極端に急増したものを拾う。
     """
     return (
-        (df['vol_baseline_shift'] >= 2.5) &
-        (df['daily_ret'] >= -0.03) &
-        (df['pct_from_50d_high'] >= -0.05) &
+        (df['vol_baseline_shift'] >= 3.5) &
+        (df['Close'] > df['ma5']) &
+        (df['ma5'] > df['ma25']) &
+        (df['ma25'] > df['ma75']) &
         (~df['price_frozen_5d']) &
         (df['turnover_avg_20'] >= 1e8) &
         (~df['CodeStr'].isin(etf_codes)) &

@@ -197,6 +197,17 @@ def save_signal_history(records: List[Dict]) -> int:
     return inserted
 
 
+def clear_signal_history() -> int:
+    """Delete all rows from signal_history. Returns rows deleted."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM signal_history')
+    deleted = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted
+
+
 def get_signal_history(days: int = 30) -> List[Dict]:
     """Return recent signal history rows."""
     conn = sqlite3.connect(DB_PATH)
