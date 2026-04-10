@@ -1,5 +1,5 @@
 /**
- * 決算インパクト分析 JavaScript
+ * 決算インパクト分析 + 上方修正先回り JavaScript
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -16,7 +16,19 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     document.getElementById('sRankOnly').addEventListener('change', applyFilter);
+
+    // Slider value display
+    const s2q = document.getElementById('revProgress2q');
+    const s3q = document.getElementById('revProgress3q');
+    if (s2q) s2q.addEventListener('input', () => {
+        document.getElementById('revProgress2qVal').textContent = s2q.value + '%';
+    });
+    if (s3q) s3q.addEventListener('input', () => {
+        document.getElementById('revProgress3qVal').textContent = s3q.value + '%';
+    });
 });
+
+/* ── Utilities ── */
 
 function escHtml(s) {
     if (!s) return '';
@@ -39,6 +51,8 @@ function fmtPct(v) {
     const sign = v >= 0 ? '+' : '';
     return `<span class="${cls}">${sign}${v.toFixed(1)}%</span>`;
 }
+
+/* ── 決算インパクト分析 ── */
 
 let allStocks = [];
 
@@ -126,6 +140,91 @@ function renderTable(stocks) {
             <td class="num-cell">${s.progress != null ? s.progress.toFixed(1) + '%' : '-'}</td>
             <td class="num-cell">${fmtMarketCap(s.market_cap)}</td>
             <td class="q-cell">${escHtml(s.q_type)}</td>
+        </tr>`;
+    }).join('');
+}
+
+/* ── 上方修正先回りスクリーニング ── */
+
+async function loadRevisionCandidates() {
+    const loading = document.getElementById('revLoading');
+    const empty = document.getElementById('revEmpty');
+    const wrap = document.getElementById('revTableWrap');
+    const summary = document.getElementById('revSummary');
+
+    loading.style.display = 'flex';
+    empty.style.display = 'none';
+    wrap.style.display = 'none';
+    summary.style.display = 'none';
+
+    const p2q = document.getElementById('revProgress2q').value;
+    const p3q = document.getElementById('revProgress3q').value;
+    const minCap = document.getElementById('revMinCap').value;
+    const maxCap = document.getElementById('revMaxCap').value;
+    const lookback = document.getElementById('revLookback').value;
+
+    const params = new URLSearchParams({
+        min_progress_2q: p2q,
+        min_progress_3q: p3q,
+        min_cap: minCap,
+        max_cap: maxCap,
+        lookback: lookback,
+    });
+
+    try {
+        const res = await fetch(`/api/earnings/revision-candidates?${params}`);
+        const data = await res.json();
+
+        loading.style.display = 'none';
+
+        if (!data.success) {
+            empty.textContent = 'エラー: ' + (data.error || '不明');
+            empty.style.display = 'block';
+            return;
+        }
+
+        const stocks = data.stocks || [];
+
+        if (stocks.length === 0) {
+            empty.textContent = '条件に合致する銘柄はありませんでした。条件を緩和してお試しください。';
+            empty.style.display = 'block';
+            return;
+        }
+
+        document.getElementById('revTotal').textContent = `${stocks.length} 銘柄ヒット`;
+        summary.style.display = 'flex';
+
+        renderRevisionTable(stocks);
+    } catch (e) {
+        loading.style.display = 'none';
+        empty.textContent = '通信エラー: ' + e.message;
+        empty.style.display = 'block';
+    }
+}
+
+function renderRevisionTable(stocks) {
+    const wrap = document.getElementById('revTableWrap');
+    const tbody = document.getElementById('revBody');
+
+    wrap.style.display = 'block';
+
+    tbody.innerHTML = stocks.map(s => {
+        const progressCls = s.progress >= 90 ? 'progress-hot' : s.progress >= 75 ? 'progress-warm' : '';
+        const yahooUrl = `https://finance.yahoo.co.jp/quote/${escHtml(s.code)}.T`;
+        const kabutanUrl = `https://kabutan.jp/stock/?code=${escHtml(s.code)}`;
+        return `<tr class="${progressCls}">
+            <td class="code-cell">${escHtml(s.code)}</td>
+            <td class="name-cell">${escHtml(s.name)}</td>
+            <td class="q-cell">${escHtml(s.q_type)}</td>
+            <td class="num-cell progress-cell">${s.progress.toFixed(1)}%</td>
+            <td class="num-cell">${fmtPct(s.sales_yoy)}</td>
+            <td class="num-cell">${fmtPct(s.op_yoy)}</td>
+            <td class="num-cell">${s.market_cap_oku != null ? s.market_cap_oku.toLocaleString() : '-'}</td>
+            <td class="num-cell">${s.ma25_dev != null ? fmtPct(s.ma25_dev) : '-'}</td>
+            <td class="link-cell">
+                <a href="${yahooUrl}" target="_blank" rel="noopener" class="ext-link" title="Yahoo!ファイナンス">Y!</a>
+                <a href="${kabutanUrl}" target="_blank" rel="noopener" class="ext-link kabutan" title="株探">株探</a>
+            </td>
         </tr>`;
     }).join('');
 }

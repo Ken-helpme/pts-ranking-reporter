@@ -344,6 +344,239 @@ class JQuantsClient:
             'counts': counts,
         }
 
+    # ========== 上方修正先回りスクリーニング ==========
+
+    def _get_all_summaries_for_dates(self, dates: List[str]) -> List[Dict]:
+        """複数日の fins/summary を一括取得（土日をスキップ、空結果日はカウントしない）"""
+        all_data = []
+        empty_streak = 0
+        for d in dates:
+            dt = datetime.strptime(d, '%Y-%m-%d')
+            if dt.weekday() >= 5:
+                continue
+            try:
+                result = self._get("/fins/summary", {"date": d})
+                batch = result.get("data", [])
+                if batch:
+                    all_data.extend(batch)
+                    empty_streak = 0
+                else:
+                    empty_streak += 1
+                time.sleep(0.25)
+            except Exception as e:
+                logger.warning(f"fins/summary date={d} 取得失敗: {e}")
+                empty_streak += 1
+        return all_data
+
+    def get_revision_candidates(self,
+                                lookback_days: int = 60,
+                                min_progress_2q: float = 65.0,
+                                min_progress_3q: float = 85.0,
+                                min_sales_yoy: float = 15.0,
+                                min_op_yoy: float = 20.0,
+                                min_market_cap: float = 10_000_000_000,
+                                max_market_cap: float = 100_000_000_000,
+                                ) -> Dict:
+        """
+        上方修正先回り候補を抽出する。
+
+        直近 lookback_days 日間に発表された2Q/3Q決算のうち、
+        (1) 経常利益進捗率が閾値以上
+        (2) 業績予想の修正がまだ行われていない
+        (3) 単四半期の売上・営業益YoYが高成長
+        (4) 時価総額が中小型 (100億〜1000億)
+        (5) 終値 > 25SMA（上昇トレンド）
+        を満たす銘柄をリストアップする。
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        # ── 1. 直近 lookback_days 日分の決算データを取得 ──
+        base = datetime.now()
+        dates = []
+        for i in range(lookback_days):
+            d = (base - timedelta(days=i)).strftime('%Y-%m-%d')
+            dates.append(d)
+
+        all_stmts = self._get_all_summaries_for_dates(dates)
+        if not all_stmts:
+            return {'stocks': [], 'total': 0}
+
+        # 重複除去 (同一銘柄・同一 DiscNo)
+        seen = set()
+        unique = []
+        for s in all_stmts:
+            key = s.get('DiscNo', '')
+            if key and key not in seen:
+                seen.add(key)
+                unique.append(s)
+
+        # ── 2. 2Q/3Q のみ抽出 + 連結優先 ──
+        target_records = {}
+        for s in unique:
+            q_type = s.get('CurPerType', '')
+            if q_type not in ('2Q', 'HY', '3Q'):
+                continue
+            code = s.get('Code', '')
+            doc = s.get('DocType', '')
+            existing = target_records.get(code)
+            if existing:
+                if 'Consolidated' in doc and 'Consolidated' not in existing.get('DocType', ''):
+                    target_records[code] = s
+                elif (s.get('CurFYSt', '') > existing.get('CurFYSt', '')):
+                    target_records[code] = s
+            else:
+                target_records[code] = s
+
+        # ── 3. フィルタリング ──
+        master = self.get_master()
+        master_dict = {}
+        for m in master:
+            c = m.get('Code', '')
+            master_dict[c] = m
+
+        candidates = []
+        codes_for_price = []
+
+        for code, rec in target_records.items():
+            q_type = rec.get('CurPerType', '')
+            fy_start = rec.get('CurFYSt', '')
+            code4 = code[:-1] if len(code) == 5 and code.endswith('0') else code
+
+            # (A) 進捗率チェック
+            cum_odp = self._safe_float(rec.get('OdP'))
+            forecast_odp = self._safe_float(rec.get('FOdP'))
+            if not forecast_odp or forecast_odp <= 0:
+                forecast_odp = self._safe_float(rec.get('FOP'))
+                cum_odp = self._safe_float(rec.get('OP')) if cum_odp is None else cum_odp
+            if cum_odp is None or not forecast_odp or forecast_odp <= 0:
+                continue
+
+            progress = cum_odp / forecast_odp * 100
+
+            if q_type in ('2Q', 'HY'):
+                if progress < min_progress_2q:
+                    continue
+            elif q_type == '3Q':
+                if progress < min_progress_3q:
+                    continue
+            else:
+                continue
+
+            # (B) 修正フラグチェック — まだ修正していない銘柄のみ
+            if str(rec.get('ChgByASRev', '')).lower() == 'true':
+                continue
+
+            # (C) 単Q成長率チェック — 前年同期比が必要なので銘柄個別に全期データを取得
+            try:
+                stmts_all = self.get_financial_summary(code)
+                time.sleep(0.3)
+            except Exception as e:
+                logger.warning(f"[{code4}] summary取得失敗: {e}")
+                continue
+
+            stmts_valid = [s for s in stmts_all
+                           if self._safe_float(s.get('Sales')) is not None
+                           and s.get('CurPerType', '') in self._Q_ORDER]
+            stmts_valid.sort(key=lambda s: (
+                s.get('CurFYSt', ''),
+                self._Q_ORDER.get(s.get('CurPerType', ''), 0),
+            ))
+
+            sq = self._calc_single_quarter(stmts_valid, rec)
+            yoy_rec = self._find_yoy_target(stmts_valid, rec)
+            sales_yoy = None
+            op_yoy = None
+
+            if sq and yoy_rec:
+                prev_sq = self._calc_single_quarter(stmts_valid, yoy_rec)
+                if prev_sq:
+                    if prev_sq['sales'] and prev_sq['sales'] > 0 and sq['sales'] is not None:
+                        sales_yoy = (sq['sales'] / prev_sq['sales'] - 1) * 100
+                    if prev_sq['op'] and prev_sq['op'] > 0 and sq['op'] is not None:
+                        op_yoy = (sq['op'] / prev_sq['op'] - 1) * 100
+
+            if sales_yoy is None or sales_yoy < min_sales_yoy:
+                continue
+            if op_yoy is None or op_yoy < min_op_yoy:
+                continue
+
+            # (D) 時価総額チェック
+            m_info = master_dict.get(code, {})
+            shares = self._safe_float(m_info.get('ShOutFY') or rec.get('ShOutFY'))
+            if not shares:
+                continue
+
+            candidates.append({
+                'code': code4,
+                'code5': code,
+                'name': m_info.get('CoName', ''),
+                'sector': m_info.get('S33Nm', ''),
+                'market': m_info.get('MktNm', ''),
+                'q_type': q_type,
+                'fy_end': rec.get('CurFYEn', ''),
+                'progress': round(progress, 1),
+                'sales_yoy': round(sales_yoy, 1),
+                'op_yoy': round(op_yoy, 1),
+                'shares': shares,
+                'disc_date': rec.get('DiscDate', ''),
+            })
+            codes_for_price.append(code)
+
+        if not candidates:
+            return {'stocks': [], 'total': 0}
+
+        # ── 4. 株価データ取得 (直近終値 + 25SMA) ──
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        from_str = (datetime.now() - timedelta(days=50)).strftime('%Y-%m-%d')
+
+        def fetch_price_data(cand):
+            code5 = cand['code5']
+            try:
+                prices = self.get_prices(code5, from_str, today_str)
+                if not prices:
+                    return
+                closes = [self._safe_float(p.get('AdjC') or p.get('C')) for p in prices]
+                closes = [c for c in closes if c is not None]
+                if len(closes) < 25:
+                    return
+                latest_close = closes[-1]
+                sma25 = sum(closes[-25:]) / 25
+
+                cand['close'] = latest_close
+                cand['sma25'] = round(sma25, 1)
+                cand['ma25_dev'] = round((latest_close - sma25) / sma25 * 100, 2)
+                cand['market_cap'] = round(cand['shares'] * latest_close)
+            except Exception as e:
+                logger.warning(f"[{cand['code']}] 株価取得失敗: {e}")
+
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            list(ex.map(fetch_price_data, candidates))
+
+        # ── 5. 時価総額 + 25SMA フィルター ──
+        final = []
+        for c in candidates:
+            mc = c.get('market_cap')
+            if not mc:
+                continue
+            if mc < min_market_cap or mc > max_market_cap:
+                continue
+            if c.get('close') is None or c.get('sma25') is None:
+                continue
+            if c['close'] <= c['sma25']:
+                continue
+
+            c.pop('code5', None)
+            c.pop('shares', None)
+            c['market_cap_oku'] = round(mc / 1e8)
+            final.append(c)
+
+        final.sort(key=lambda r: -r['progress'])
+
+        return {
+            'stocks': final,
+            'total': len(final),
+        }
+
     # ========== スクリーニング ==========
 
     def _normalize_code(self, code: str) -> str:

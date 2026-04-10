@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>決算インパクト分析 | PTSランキング</title>
     <link rel="stylesheet" href="/static/css/style.css">
-    <link rel="stylesheet" href="/static/css/earnings.css?v=20260408a">
+    <link rel="stylesheet" href="/static/css/earnings.css?v=20260325b">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 
@@ -31,7 +31,7 @@
         <!-- Tab Bar -->
         <div class="tab-bar">
             <button class="tab-btn active" data-tab="impact">決算インパクト分析</button>
-            <button class="tab-btn" data-tab="revision">上方修正先回り（準備中）</button>
+            <button class="tab-btn" data-tab="revision">🔍 上方修正先回り</button>
         </div>
 
         <!-- Tab: 決算インパクト分析 -->
@@ -92,13 +92,80 @@
 
         <!-- Tab: 上方修正先回り -->
         <div class="tab-content" id="tab-revision">
-            <div class="placeholder-box">
-                <p>上方修正先回りスクリーニングは今後実装予定です。</p>
+
+            <div class="rev-description">
+                <p>2Q/3Q決算の経常利益進捗率が高く、かつ会社予想の上方修正がまだ出ていない「先回り」候補を自動抽出します。<br>
+                単四半期の売上・営業益が前年同期比で高成長 × 中小型 × 上昇トレンドの銘柄のみ。</p>
             </div>
+
+            <div class="rev-controls">
+                <div class="rev-control-row">
+                    <div class="control-group">
+                        <label>2Q最低進捗率</label>
+                        <input type="range" id="revProgress2q" min="50" max="80" step="1" value="65">
+                        <span class="slider-val" id="revProgress2qVal">65%</span>
+                    </div>
+                    <div class="control-group">
+                        <label>3Q最低進捗率</label>
+                        <input type="range" id="revProgress3q" min="70" max="95" step="1" value="85">
+                        <span class="slider-val" id="revProgress3qVal">85%</span>
+                    </div>
+                    <div class="control-group">
+                        <label>時価総額（億円）</label>
+                        <input type="number" id="revMinCap" value="100" min="0" style="width:70px;">
+                        <span>〜</span>
+                        <input type="number" id="revMaxCap" value="1000" min="0" style="width:70px;">
+                    </div>
+                    <div class="control-group">
+                        <label>検索期間（日）</label>
+                        <select id="revLookback">
+                            <option value="30">30日</option>
+                            <option value="60" selected>60日</option>
+                            <option value="90">90日</option>
+                        </select>
+                    </div>
+                    <button class="btn-fetch" id="btnRevFetch" onclick="loadRevisionCandidates()">スクリーニング実行</button>
+                </div>
+            </div>
+
+            <div class="rev-summary" id="revSummary" style="display:none;">
+                <span class="summary-total" id="revTotal"></span>
+                <span class="rev-hint">進捗率の高い順に表示</span>
+            </div>
+
+            <div class="loading-overlay" id="revLoading" style="display:none;">
+                <div class="spinner"></div>
+                <p>決算データをスキャン中…<br><small>直近の2Q/3Q決算を分析しています（1〜3分）</small></p>
+            </div>
+
+            <div class="earnings-empty" id="revEmpty">
+                条件を調整して「スクリーニング実行」をクリックしてください。
+            </div>
+
+            <div class="table-wrap" id="revTableWrap" style="display:none;">
+                <table class="earnings-table" id="revTable">
+                    <thead>
+                        <tr>
+                            <th>コード</th>
+                            <th>銘柄名</th>
+                            <th>決算期</th>
+                            <th>経常利益進捗率</th>
+                            <th>単Q売上成長率</th>
+                            <th>単Q営業益成長率</th>
+                            <th>時価総額（億円）</th>
+                            <th>25日線乖離率</th>
+                            <th>リンク</th>
+                        </tr>
+                    </thead>
+                    <tbody id="revBody"></tbody>
+                </table>
+            </div>
+
+            <p class="disclaimer">※ 本情報は投資助言ではありません。投資判断はご自身の責任で行ってください。</p>
         </div>
 
     </div>
 
-    <script src="/static/js/earnings.js?v=20260408a"></script>
+    <script src="/static/js/earnings.js?v=20260325b"></script>
 </body>
 </html>

@@ -916,6 +916,34 @@ def earnings_impact():
         return jsonify({'success': False, 'error': str(e)})
 
 
+@app.route('/api/earnings/revision-candidates')
+def earnings_revision_candidates():
+    """上方修正先回り候補を返す"""
+    try:
+        min_progress_2q = request.args.get('min_progress_2q', 65.0, type=float)
+        min_progress_3q = request.args.get('min_progress_3q', 85.0, type=float)
+        min_sales_yoy = request.args.get('min_sales_yoy', 15.0, type=float)
+        min_op_yoy = request.args.get('min_op_yoy', 20.0, type=float)
+        min_cap = request.args.get('min_cap', 100, type=float) * 1e8
+        max_cap = request.args.get('max_cap', 1000, type=float) * 1e8
+        lookback = request.args.get('lookback', 60, type=int)
+
+        result = jquants.get_revision_candidates(
+            lookback_days=lookback,
+            min_progress_2q=min_progress_2q,
+            min_progress_3q=min_progress_3q,
+            min_sales_yoy=min_sales_yoy,
+            min_op_yoy=min_op_yoy,
+            min_market_cap=min_cap,
+            max_market_cap=max_cap,
+        )
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
+
 # ========== クオンツ分析 ==========
 
 _quant_jobs: dict = {}  # job_id -> {status, logs, current_step, progress, report, error}

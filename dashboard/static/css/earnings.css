@@ -210,16 +210,7 @@
 .negative { color: #dc2626; }
 .na { color: #94a3b8; font-size: 11px; }
 
-/* Placeholder */
-.placeholder-box {
-    text-align: center;
-    padding: 80px 20px;
-    color: #94a3b8;
-    font-size: 14px;
-    border: 2px dashed #e2e8f0;
-    border-radius: 10px;
-}
-
+/* Disclaimer */
 .disclaimer {
     text-align: center;
     font-size: 11px;
@@ -227,8 +218,132 @@
     margin-top: 20px;
 }
 
+/* ==============================
+   上方修正先回りタブ
+   ============================== */
+
+.rev-description {
+    padding: 14px 20px;
+    background: linear-gradient(135deg, #eff6ff 0%, #f0fdf4 100%);
+    border: 1px solid #dbeafe;
+    border-radius: 10px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    color: #475569;
+    line-height: 1.6;
+}
+
+.rev-controls {
+    padding: 16px 20px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    margin-bottom: 16px;
+}
+.rev-control-row {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+.rev-controls .control-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.rev-controls label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #475569;
+    white-space: nowrap;
+}
+.rev-controls input[type="range"] {
+    width: 100px;
+    accent-color: #2563eb;
+}
+.slider-val {
+    font-size: 13px;
+    font-weight: 700;
+    color: #2563eb;
+    min-width: 36px;
+    text-align: right;
+}
+.rev-controls input[type="number"],
+.rev-controls select {
+    padding: 5px 8px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    font-size: 13px;
+}
+
+.rev-summary {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 20px;
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 10px;
+    margin-bottom: 16px;
+    font-size: 13px;
+}
+.rev-summary .summary-total {
+    font-weight: 700;
+    color: #15803d;
+}
+.rev-hint {
+    color: #64748b;
+    font-size: 12px;
+}
+
+/* Progress heat */
+.progress-cell {
+    font-weight: 700 !important;
+}
+tr.progress-hot {
+    background: linear-gradient(90deg, #fef2f2 0%, #fff 40%);
+}
+tr.progress-hot:hover { background: #fee2e2; }
+tr.progress-hot .progress-cell { color: #dc2626; }
+
+tr.progress-warm {
+    background: linear-gradient(90deg, #fffbeb 0%, #fff 40%);
+}
+tr.progress-warm:hover { background: #fef3c7; }
+tr.progress-warm .progress-cell { color: #d97706; }
+
+/* External links */
+.link-cell {
+    display: flex;
+    gap: 6px;
+    white-space: nowrap;
+}
+.ext-link {
+    display: inline-block;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 4px;
+    text-decoration: none;
+    background: #f1f5f9;
+    color: #475569;
+    transition: all 0.15s ease;
+}
+.ext-link:hover {
+    background: #e2e8f0;
+    color: #1e293b;
+}
+.ext-link.kabutan {
+    background: #eff6ff;
+    color: #2563eb;
+}
+.ext-link.kabutan:hover {
+    background: #dbeafe;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .earnings-controls { flex-wrap: wrap; }
+    .rev-control-row { flex-direction: column; align-items: flex-start; gap: 12px; }
     .nav-links { flex-wrap: wrap; }
 }
