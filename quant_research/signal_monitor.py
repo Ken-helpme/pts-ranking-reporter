@@ -152,13 +152,21 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
     df['vol_ultra_early_shift'] = df['vol_med_5'] / df['vol_med_60_prev'].replace(0, np.nan)
 
     # ── Surge ratio (スクリーニングと同一ロジック) ────────────────────
-    # past_base:    Day 40 ~ Day 5 (35日間) の中央値
-    # recent_surge: Day 2 ~ Day 0  (直近3日)  の平均値
     vol_past_35 = g['Volume'].shift(5).groupby(df['CodeStr']).transform(
         lambda x: x.rolling(35, min_periods=25).median())
     vol_recent_3 = g['Volume'].transform(
         lambda x: x.rolling(3, min_periods=3).mean())
     df['vol_surge_3d'] = vol_recent_3 / vol_past_35.replace(0, np.nan)
+
+    # ── 継続上昇モメンタム用: 出来高サージ（当日 / 25日平均 >= 1.5x）──
+    vol_avg_25 = g['Volume'].transform(
+        lambda x: x.rolling(25, min_periods=20).mean())
+    df['vol_daily_surge'] = df['Volume'] / vol_avg_25.replace(0, np.nan)
+
+    # ── SMA 傾き（5日前との比較）──────────────────────────
+    if 'ma75_slope' not in df.columns:
+        df['ma75_slope'] = df.groupby('CodeStr')['ma75'].transform(
+            lambda x: x.diff(5) / x.shift(5) * 100)
 
     # Legacy vol_above_count_20d (used for display in the table)
     if 'vol_above_count_20d' not in df.columns:
@@ -199,16 +207,30 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
 # Core signal detection
 # ---------------------------------------------------------------------------
 
-def compute_signals(df: pd.DataFrame, etf_codes: set, growing_codes: set) -> pd.Series:
+def _continuous_uptrend(df: pd.DataFrame) -> pd.Series:
     """
-    出来高サージ(3日平均/35日中央値 >= 2.5x) × パーフェクトオーダー。
-    スクリーニングページと完全に同一の検知ロジック。
+    継続上昇モメンタム条件:
+      1. パーフェクトオーダー: Close > 5SMA > 25SMA > 75SMA
+      2. 25SMAの傾き上向き: 当日の25SMA > 5日前の25SMA
+      3. 75SMAの傾き上向き: 当日の75SMA > 5日前の75SMA
     """
     return (
-        (df['vol_surge_3d'] >= 2.5) &
         (df['Close'] > df['ma5']) &
         (df['ma5'] > df['ma25']) &
         (df['ma25'] > df['ma75']) &
+        (df['ma25_slope'] > 0) &
+        (df['ma75_slope'] > 0)
+    )
+
+
+def compute_signals(df: pd.DataFrame, etf_codes: set, growing_codes: set) -> pd.Series:
+    """
+    メインシグナル: 継続上昇トレンド × 出来高サージ (当日出来高 >= 25日平均 × 1.5)。
+    「ずっと上がっている銘柄がさらに出来高を伴って上昇したポイント」を検知。
+    """
+    return (
+        _continuous_uptrend(df) &
+        (df['vol_daily_surge'] >= 1.5) &
         (~df['price_frozen_5d']) &
         (df['turnover_avg_20'] >= 1e8) &
         (~df['CodeStr'].isin(etf_codes)) &
@@ -219,15 +241,13 @@ def compute_signals(df: pd.DataFrame, etf_codes: set, growing_codes: set) -> pd.
 def compute_ultra_early_signals(df: pd.DataFrame, etf_codes: set,
                                  growing_codes: set) -> pd.Series:
     """
-    超初動シグナル: サージ比 1.8x〜2.5x + パーフェクトオーダー。
-    メインシグナルの手前で初動1週目を捕捉する。
+    超初動シグナル: 継続上昇トレンド × やや出来高増 (1.3x〜1.5x)。
+    メインの手前で初動を捕捉する。
     """
     return (
-        (df['vol_surge_3d'] >= 1.8) &
-        (df['vol_surge_3d'] < 2.5) &
-        (df['Close'] > df['ma5']) &
-        (df['ma5'] > df['ma25']) &
-        (df['ma25'] > df['ma75']) &
+        _continuous_uptrend(df) &
+        (df['vol_daily_surge'] >= 1.3) &
+        (df['vol_daily_surge'] < 1.5) &
         (~df['price_frozen_5d']) &
         (df['turnover_avg_20'] >= 1e8) &
         (~df['CodeStr'].isin(etf_codes)) &
@@ -239,15 +259,12 @@ def compute_ultra_early_signals(df: pd.DataFrame, etf_codes: set,
 def compute_accel_signals(df: pd.DataFrame, etf_codes: set,
                           growing_codes: set) -> pd.Series:
     """
-    出来高加速シグナル: サージ比 5.0x超 + パーフェクトオーダー。
-    メインと超初動の両方に引っかからなかった銘柄のうち、
-    出来高が極端に急増したものを拾う。
+    出来高加速シグナル: 継続上昇トレンド × 出来高爆発 (3.0x超)。
+    大口が本格参入した銘柄を拾う。
     """
     return (
-        (df['vol_surge_3d'] >= 5.0) &
-        (df['Close'] > df['ma5']) &
-        (df['ma5'] > df['ma25']) &
-        (df['ma25'] > df['ma75']) &
+        _continuous_uptrend(df) &
+        (df['vol_daily_surge'] >= 3.0) &
         (~df['price_frozen_5d']) &
         (df['turnover_avg_20'] >= 1e8) &
         (~df['CodeStr'].isin(etf_codes)) &
@@ -343,9 +360,10 @@ def get_signal_stocks(data_dir: Optional[str] = None, force: bool = False) -> di
     sig_df = df[df['_signal'] & df['Date'].isin(recent_3d)].copy()
     first_signal = sig_df.groupby('CodeStr')['Date'].min().to_dict()
 
-    # VB start price: 直近3営業日でサージ比 >= 2.0 になった最初の日
-    _vb_col = 'vol_surge_3d' if 'vol_surge_3d' in df.columns else 'vol_base_ratio'
-    vb_cross = df[(df[_vb_col] >= 2.0) & df['Date'].isin(recent_3d)].sort_values('Date')
+    # VB start price: 直近3営業日で日次サージ >= 1.5 になった最初の日
+    _vb_col = 'vol_daily_surge' if 'vol_daily_surge' in df.columns else 'vol_base_ratio'
+    _vb_thresh = 1.5 if _vb_col == 'vol_daily_surge' else 2.0
+    vb_cross = df[(df[_vb_col] >= _vb_thresh) & df['Date'].isin(recent_3d)].sort_values('Date')
     vb_first = vb_cross.groupby('CodeStr').first()
     vb_start_price_map = vb_first['Close'].to_dict() if not vb_first.empty else {}
     vb_start_date_map = {c: pd.Timestamp(d).strftime('%Y-%m-%d')

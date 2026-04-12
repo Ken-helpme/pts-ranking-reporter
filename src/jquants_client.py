@@ -525,7 +525,7 @@ class JQuantsClient:
         if not candidates:
             return {'stocks': [], 'total': 0}
 
-        # ── 4. 株価データ取得 (75SMA に必要な 150日分) ──
+        # ── 4. 株価データ取得 (75SMA+傾き に必要な 150日分) ──
         today_str = datetime.now().strftime('%Y-%m-%d')
         from_str = (datetime.now() - timedelta(days=150)).strftime('%Y-%m-%d')
 
@@ -540,13 +540,17 @@ class JQuantsClient:
 
                 closes = [self._safe_float(p.get('AdjC') or p.get('C')) for p in prices]
                 closes = [c for c in closes if c is not None]
-                if len(closes) < 75:
+                if len(closes) < 80:
                     return
 
                 latest_close = closes[-1]
                 sma5 = sum(closes[-5:]) / 5
                 sma25 = sum(closes[-25:]) / 25
                 sma75 = sum(closes[-75:]) / 75
+
+                closes_5ago = closes[:-5]
+                sma25_5ago = sum(closes_5ago[-25:]) / 25 if len(closes_5ago) >= 25 else None
+                sma75_5ago = sum(closes_5ago[-75:]) / 75 if len(closes_5ago) >= 75 else None
 
                 cand['close'] = latest_close
                 cand['sma5'] = round(sma5, 1)
@@ -555,8 +559,10 @@ class JQuantsClient:
                 cand['ma25_dev'] = round((latest_close - sma25) / sma25 * 100, 2)
                 cand['market_cap'] = round(cand['shares'] * latest_close)
 
-                cand['_perfect_order'] = (
+                cand['_continuous_uptrend'] = (
                     latest_close > sma5 > sma25 > sma75
+                    and sma25_5ago is not None and sma25 > sma25_5ago
+                    and sma75_5ago is not None and sma75 > sma75_5ago
                 )
             except Exception as e:
                 logger.warning(f"[{cand['code']}] 株価取得失敗: {e}")
@@ -564,7 +570,7 @@ class JQuantsClient:
         with ThreadPoolExecutor(max_workers=4) as ex:
             list(ex.map(fetch_price_data, candidates))
 
-        # ── 5. パーフェクトオーダー + 時価総額 フィルター ──
+        # ── 5. 継続上昇モメンタム + 時価総額 フィルター ──
         final = []
         for c in candidates:
             mc = c.get('market_cap')
@@ -574,14 +580,14 @@ class JQuantsClient:
                 continue
             if c.get('close') is None or c.get('sma5') is None or c.get('sma25') is None or c.get('sma75') is None:
                 continue
-            if not c.get('_perfect_order'):
-                logger.info(f"[{c['code']}] パーフェクトオーダー不成立で除外: "
+            if not c.get('_continuous_uptrend'):
+                logger.info(f"[{c['code']}] 継続上昇モメンタム不成立で除外: "
                             f"Close={c['close']} 5SMA={c['sma5']} 25SMA={c['sma25']} 75SMA={c['sma75']}")
                 continue
 
             c.pop('code5', None)
             c.pop('shares', None)
-            c.pop('_perfect_order', None)
+            c.pop('_continuous_uptrend', None)
             c['market_cap_oku'] = round(mc / 1e8)
             final.append(c)
 
@@ -831,18 +837,21 @@ class JQuantsClient:
 
     @staticmethod
     def _detect_regime_change(opens, highs, lows, closes, volumes,
-                              regime_ratio_min=2.5, min_recent_vol=100_000):
+                              regime_ratio_min=1.5, min_recent_vol=100_000):
         """
-        出来高サージ × パーフェクトオーダーで初動を高速検知する。
+        継続上昇モメンタム × 出来高サージで「ずっと上がっている銘柄の盛り上がり」を検知。
 
-        出来高: 過去35日(中央値) vs 直近3日(平均) で急変を即座に捕捉。
-        トレンド: 終値 > 5SMA > 25SMA > 75SMA のパーフェクトオーダーで
-                  デッド・キャット・バウンスを物理的に排除。
+        トレンド (3 条件すべて必須):
+          1. パーフェクトオーダー: 終値 > 5SMA > 25SMA > 75SMA
+          2. 25SMAの傾き上向き:  当日の25SMA > 5日前の25SMA
+          3. 75SMAの傾き上向き:  当日の75SMA > 5日前の75SMA
+
+        出来高: 当日の出来高 / 直近25日平均出来高 >= 1.5x
 
         Args:
-            opens/highs/lows/closes/volumes: 古い順の配列（75日以上必要）
-            regime_ratio_min: recent_surge / past_base の閾値 (default 2.5)
-            min_recent_vol:   recent_surge の最低出来高
+            opens/highs/lows/closes/volumes: 古い順の配列（80日以上必要）
+            regime_ratio_min: 当日出来高 / 25日平均出来高 の閾値 (default 1.5)
+            min_recent_vol:   当日出来高の最低値
 
         Returns:
             (passed: bool, details: dict)
@@ -852,34 +861,30 @@ class JQuantsClient:
             "passed": False, "past_base": 0, "recent_surge": 0,
             "surge_ratio": 0,
             "sma5": None, "sma25": None, "sma75": None,
+            "sma25_5d_ago": None, "sma75_5d_ago": None,
             "perfect_order": False,
+            "sma25_rising": False, "sma75_rising": False,
         }
 
-        if n < 75:
+        if n < 80:
             return False, result
 
-        # ── 出来高サージ検知 ──
-        # past_base:    Day 40 ~ Day 5 (35日間) の中央値
-        # recent_surge: Day 2 ~ Day 0  (直近3日)  の平均値
-        past_vols = volumes[n - 41: n - 5]       # 35 elements
-        recent_3d_vols = volumes[n - 3: n]        # 3 elements
+        # ── 出来高サージ検知: 当日出来高 / 25日平均出来高 ──
+        vol_avg_25 = sum(volumes[n - 25: n]) / 25
+        today_vol = volumes[-1]
+        surge_ratio = today_vol / vol_avg_25 if vol_avg_25 > 0 else 0
 
-        past_base = JQuantsClient._median(past_vols)
-        recent_surge = sum(recent_3d_vols) / 3 if len(recent_3d_vols) == 3 else 0
-
-        surge_ratio = recent_surge / past_base if past_base > 0 else 0
-
-        result["past_base"] = round(past_base)
-        result["recent_surge"] = round(recent_surge)
+        result["past_base"] = round(vol_avg_25)
+        result["recent_surge"] = round(today_vol)
         result["surge_ratio"] = round(surge_ratio, 2)
 
         if surge_ratio < regime_ratio_min:
             return False, result
 
-        if recent_surge < min_recent_vol:
+        if today_vol < min_recent_vol:
             return False, result
 
-        # ── パーフェクトオーダー（鉄壁トレンドフィルター） ──
+        # ── パーフェクトオーダー + SMA傾き（継続上昇モメンタム） ──
         sma5 = JQuantsClient._sma(closes, 5)
         sma25 = JQuantsClient._sma(closes, 25)
         sma75 = JQuantsClient._sma(closes, 75)
@@ -892,13 +897,25 @@ class JQuantsClient:
             return False, result
 
         day0_close = closes[-1]
-
-        # 条件A: 25SMA > 75SMA（中期線が長期線の上）
-        # 条件B: 5SMA > 25SMA （短期線が中期線の上）
-        # 条件C: 終値 > 5SMA  （株価が一番上）
         perfect_order = (sma25 > sma75) and (sma5 > sma25) and (day0_close > sma5)
         result["perfect_order"] = perfect_order
         if not perfect_order:
+            return False, result
+
+        # 5日前の SMA を計算（傾き判定用）
+        closes_5ago = closes[:-5]
+        sma25_5d_ago = sum(closes_5ago[-25:]) / 25 if len(closes_5ago) >= 25 else None
+        sma75_5d_ago = sum(closes_5ago[-75:]) / 75 if len(closes_5ago) >= 75 else None
+
+        result["sma25_5d_ago"] = round(sma25_5d_ago, 1) if sma25_5d_ago else None
+        result["sma75_5d_ago"] = round(sma75_5d_ago, 1) if sma75_5d_ago else None
+
+        sma25_rising = sma25_5d_ago is not None and sma25 > sma25_5d_ago
+        sma75_rising = sma75_5d_ago is not None and sma75 > sma75_5d_ago
+        result["sma25_rising"] = sma25_rising
+        result["sma75_rising"] = sma75_rising
+
+        if not sma25_rising or not sma75_rising:
             return False, result
 
         result["passed"] = True
