@@ -214,32 +214,33 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
 # Core signal detection
 # ---------------------------------------------------------------------------
 
-def _continuous_uptrend(df: pd.DataFrame) -> pd.Series:
+def _early_momentum(df: pd.DataFrame) -> pd.Series:
     """
-    継続上昇モメンタム条件:
+    初動キャッチ条件 — トレンド終盤ではなく「ジワジワ上昇が始まった直後」を検知:
       1. パーフェクトオーダー: Close > 5SMA > 25SMA > 75SMA
-      2. 25SMAの傾き上向き: 当日の25SMA > 5日前の25SMA
-      3. 75SMAの傾き上向き: 当日の75SMA > 20日前の75SMA
-      4. 高値圏: 終値 >= 過去120日の最高値 × 0.90（底値反発を排除）
+      2. 25SMA上向き: 当日の25SMA > 5日前の25SMA
+      3. 初動の証明: 25SMA <= 75SMA * 1.05（線がまだ開いていない）
+      4. 乖離防止: Close <= 25SMA * 1.05（株価が飛び出していない）
+      5. 急騰防止: 前日比 < 5%（ジワジワ動いている）
     """
     return (
         (df['Close'] > df['ma5']) &
         (df['ma5'] > df['ma25']) &
         (df['ma25'] > df['ma75']) &
         (df['ma25_slope'] > 0) &
-        (df['ma75_slope'] > 0) &
-        (df['pct_from_120d_high'] >= -0.10)
+        (df['ma25'] <= df['ma75'] * 1.05) &
+        (df['Close'] <= df['ma25'] * 1.05) &
+        (df['daily_ret'] < 0.05)
     )
 
 
 def compute_signals(df: pd.DataFrame, etf_codes: set, growing_codes: set) -> pd.Series:
     """
-    メインシグナル: 継続上昇トレンド × 出来高サージ (当日出来高 >= 25日平均 × 1.5)。
-    「ずっと上がっている銘柄がさらに出来高を伴って上昇したポイント」を検知。
+    メインシグナル: 初動キャッチ（出来高サージ不要）。
+    MA収束 + パーフェクトオーダー + 25SMA上向きでジワジワ上昇の初動を検知。
     """
     return (
-        _continuous_uptrend(df) &
-        (df['vol_daily_surge'] >= 1.5) &
+        _early_momentum(df) &
         (~df['price_frozen_5d']) &
         (df['turnover_avg_20'] >= 1e8) &
         (~df['CodeStr'].isin(etf_codes)) &
@@ -250,15 +251,13 @@ def compute_signals(df: pd.DataFrame, etf_codes: set, growing_codes: set) -> pd.
 def compute_ultra_early_signals(df: pd.DataFrame, etf_codes: set,
                                  growing_codes: set) -> pd.Series:
     """
-    超初動シグナル: 継続上昇トレンド × やや出来高増 (1.3x〜1.5x)。
-    メインの手前で初動を捕捉する。
+    超初動シグナル: 売買代金の閾値を下げてさらに小型の初動を捕捉。
     """
     return (
-        _continuous_uptrend(df) &
-        (df['vol_daily_surge'] >= 1.3) &
-        (df['vol_daily_surge'] < 1.5) &
+        _early_momentum(df) &
         (~df['price_frozen_5d']) &
-        (df['turnover_avg_20'] >= 1e8) &
+        (df['turnover_avg_20'] >= 5e7) &
+        (df['turnover_avg_20'] < 1e8) &
         (~df['CodeStr'].isin(etf_codes)) &
         (df['CodeStr'].isin(growing_codes)) &
         (~df['_signal'])
@@ -268,12 +267,11 @@ def compute_ultra_early_signals(df: pd.DataFrame, etf_codes: set,
 def compute_accel_signals(df: pd.DataFrame, etf_codes: set,
                           growing_codes: set) -> pd.Series:
     """
-    出来高加速シグナル: 継続上昇トレンド × 出来高爆発 (3.0x超)。
-    大口が本格参入した銘柄を拾う。
+    出来高加速シグナル: 初動キャッチ銘柄のうち出来高が急増 (1.5x超) したもの。
     """
     return (
-        _continuous_uptrend(df) &
-        (df['vol_daily_surge'] >= 3.0) &
+        _early_momentum(df) &
+        (df['vol_daily_surge'] >= 1.5) &
         (~df['price_frozen_5d']) &
         (df['turnover_avg_20'] >= 1e8) &
         (~df['CodeStr'].isin(etf_codes)) &
