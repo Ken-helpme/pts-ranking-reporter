@@ -183,7 +183,12 @@ async function loadRevisionCandidates() {
             return;
         }
 
-        const stocks = data.stocks || [];
+        const raw = data.stocks || [];
+        const stocks = raw.filter(s => {
+            const close = s.close, sma5 = s.sma5, sma25 = s.sma25, sma75 = s.sma75;
+            if (close == null || sma5 == null || sma25 == null || sma75 == null) return false;
+            return (close > sma5) && (sma5 > sma25) && (sma25 > sma75);
+        });
 
         if (stocks.length === 0) {
             empty.textContent = '条件に合致する銘柄はありませんでした。条件を緩和してお試しください。';

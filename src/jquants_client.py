@@ -525,9 +525,9 @@ class JQuantsClient:
         if not candidates:
             return {'stocks': [], 'total': 0}
 
-        # ── 4. 株価データ取得 (直近終値 + 25SMA) ──
+        # ── 4. 株価データ取得 (75SMA に必要な 150日分) ──
         today_str = datetime.now().strftime('%Y-%m-%d')
-        from_str = (datetime.now() - timedelta(days=50)).strftime('%Y-%m-%d')
+        from_str = (datetime.now() - timedelta(days=150)).strftime('%Y-%m-%d')
 
         def fetch_price_data(cand):
             code5 = cand['code5']
@@ -535,24 +535,36 @@ class JQuantsClient:
                 prices = self.get_prices(code5, from_str, today_str)
                 if not prices:
                     return
+
+                prices.sort(key=lambda p: p.get('Date', ''))
+
                 closes = [self._safe_float(p.get('AdjC') or p.get('C')) for p in prices]
                 closes = [c for c in closes if c is not None]
-                if len(closes) < 25:
+                if len(closes) < 75:
                     return
+
                 latest_close = closes[-1]
+                sma5 = sum(closes[-5:]) / 5
                 sma25 = sum(closes[-25:]) / 25
+                sma75 = sum(closes[-75:]) / 75
 
                 cand['close'] = latest_close
+                cand['sma5'] = round(sma5, 1)
                 cand['sma25'] = round(sma25, 1)
+                cand['sma75'] = round(sma75, 1)
                 cand['ma25_dev'] = round((latest_close - sma25) / sma25 * 100, 2)
                 cand['market_cap'] = round(cand['shares'] * latest_close)
+
+                cand['_perfect_order'] = (
+                    latest_close > sma5 > sma25 > sma75
+                )
             except Exception as e:
                 logger.warning(f"[{cand['code']}] 株価取得失敗: {e}")
 
         with ThreadPoolExecutor(max_workers=4) as ex:
             list(ex.map(fetch_price_data, candidates))
 
-        # ── 5. 時価総額 + 25SMA フィルター ──
+        # ── 5. パーフェクトオーダー + 時価総額 フィルター ──
         final = []
         for c in candidates:
             mc = c.get('market_cap')
@@ -560,13 +572,16 @@ class JQuantsClient:
                 continue
             if mc < min_market_cap or mc > max_market_cap:
                 continue
-            if c.get('close') is None or c.get('sma25') is None:
+            if c.get('close') is None or c.get('sma5') is None or c.get('sma25') is None or c.get('sma75') is None:
                 continue
-            if c['close'] <= c['sma25']:
+            if not c.get('_perfect_order'):
+                logger.info(f"[{c['code']}] パーフェクトオーダー不成立で除外: "
+                            f"Close={c['close']} 5SMA={c['sma5']} 25SMA={c['sma25']} 75SMA={c['sma75']}")
                 continue
 
             c.pop('code5', None)
             c.pop('shares', None)
+            c.pop('_perfect_order', None)
             c['market_cap_oku'] = round(mc / 1e8)
             final.append(c)
 
