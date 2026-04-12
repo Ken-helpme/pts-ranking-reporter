@@ -540,7 +540,7 @@ class JQuantsClient:
 
                 closes = [self._safe_float(p.get('AdjC') or p.get('C')) for p in prices]
                 closes = [c for c in closes if c is not None]
-                if len(closes) < 80:
+                if len(closes) < 95:
                     return
 
                 latest_close = closes[-1]
@@ -549,8 +549,9 @@ class JQuantsClient:
                 sma75 = sum(closes[-75:]) / 75
 
                 closes_5ago = closes[:-5]
+                closes_20ago = closes[:-20]
                 sma25_5ago = sum(closes_5ago[-25:]) / 25 if len(closes_5ago) >= 25 else None
-                sma75_5ago = sum(closes_5ago[-75:]) / 75 if len(closes_5ago) >= 75 else None
+                sma75_20ago = sum(closes_20ago[-75:]) / 75 if len(closes_20ago) >= 75 else None
 
                 cand['close'] = latest_close
                 cand['sma5'] = round(sma5, 1)
@@ -559,10 +560,12 @@ class JQuantsClient:
                 cand['ma25_dev'] = round((latest_close - sma25) / sma25 * 100, 2)
                 cand['market_cap'] = round(cand['shares'] * latest_close)
 
+                high_120d = max(closes[-120:]) if len(closes) >= 120 else max(closes)
                 cand['_continuous_uptrend'] = (
                     latest_close > sma5 > sma25 > sma75
                     and sma25_5ago is not None and sma25 > sma25_5ago
-                    and sma75_5ago is not None and sma75 > sma75_5ago
+                    and sma75_20ago is not None and sma75 > sma75_20ago
+                    and latest_close >= high_120d * 0.90
                 )
             except Exception as e:
                 logger.warning(f"[{cand['code']}] 株価取得失敗: {e}")
@@ -866,7 +869,7 @@ class JQuantsClient:
             "sma25_rising": False, "sma75_rising": False,
         }
 
-        if n < 80:
+        if n < 95:
             return False, result
 
         # ── 出来高サージ検知: 当日出来高 / 25日平均出来高 ──
@@ -902,20 +905,30 @@ class JQuantsClient:
         if not perfect_order:
             return False, result
 
-        # 5日前の SMA を計算（傾き判定用）
+        # 25SMA: 5日前と比較、75SMA: 20日前と比較
+        # (75SMAは長期線なので、短期回復ではなく「ずっと上がっている」を保証)
         closes_5ago = closes[:-5]
+        closes_20ago = closes[:-20]
         sma25_5d_ago = sum(closes_5ago[-25:]) / 25 if len(closes_5ago) >= 25 else None
-        sma75_5d_ago = sum(closes_5ago[-75:]) / 75 if len(closes_5ago) >= 75 else None
+        sma75_20d_ago = sum(closes_20ago[-75:]) / 75 if len(closes_20ago) >= 75 else None
 
         result["sma25_5d_ago"] = round(sma25_5d_ago, 1) if sma25_5d_ago else None
-        result["sma75_5d_ago"] = round(sma75_5d_ago, 1) if sma75_5d_ago else None
+        result["sma75_5d_ago"] = round(sma75_20d_ago, 1) if sma75_20d_ago else None
 
         sma25_rising = sma25_5d_ago is not None and sma25 > sma25_5d_ago
-        sma75_rising = sma75_5d_ago is not None and sma75 > sma75_5d_ago
+        sma75_rising = sma75_20d_ago is not None and sma75 > sma75_20d_ago
         result["sma25_rising"] = sma25_rising
         result["sma75_rising"] = sma75_rising
 
         if not sma25_rising or not sma75_rising:
+            return False, result
+
+        # ── 高値圏チェック: 120日高値の90%以上（底値反発を排除）──
+        high_120d = max(closes[-120:]) if n >= 120 else max(closes)
+        near_high = day0_close >= high_120d * 0.90
+        result["high_120d"] = round(high_120d, 1)
+        result["near_high"] = near_high
+        if not near_high:
             return False, result
 
         result["passed"] = True

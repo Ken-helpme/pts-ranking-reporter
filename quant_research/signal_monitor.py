@@ -163,10 +163,11 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
         lambda x: x.rolling(25, min_periods=20).mean())
     df['vol_daily_surge'] = df['Volume'] / vol_avg_25.replace(0, np.nan)
 
-    # ── SMA 傾き（5日前との比較）──────────────────────────
+    # ── SMA 傾き ──────────────────────────────────
+    # 75SMA: 20日前と比較（短期回復ではなく「ずっと上がっている」を保証）
     if 'ma75_slope' not in df.columns:
         df['ma75_slope'] = df.groupby('CodeStr')['ma75'].transform(
-            lambda x: x.diff(5) / x.shift(5) * 100)
+            lambda x: x.diff(20) / x.shift(20) * 100)
 
     # Legacy vol_above_count_20d (used for display in the table)
     if 'vol_above_count_20d' not in df.columns:
@@ -177,6 +178,12 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
             lambda x: x.rolling(50, min_periods=40).max())
     if 'breakout_50d' not in df.columns or df['breakout_50d'].dtype == object:
         df['breakout_50d'] = df['Close'] >= df['high_50d']
+
+    # 120日高値との距離（底値反発を排除するため）
+    if 'high_120d' not in df.columns:
+        df['high_120d'] = df.groupby('CodeStr')['Close'].transform(
+            lambda x: x.rolling(120, min_periods=80).max())
+    df['pct_from_120d_high'] = (df['Close'] - df['high_120d']) / df['high_120d']
 
     if 'turnover_avg_20' not in df.columns:
         if 'Turnover' in df.columns:
@@ -212,14 +219,16 @@ def _continuous_uptrend(df: pd.DataFrame) -> pd.Series:
     継続上昇モメンタム条件:
       1. パーフェクトオーダー: Close > 5SMA > 25SMA > 75SMA
       2. 25SMAの傾き上向き: 当日の25SMA > 5日前の25SMA
-      3. 75SMAの傾き上向き: 当日の75SMA > 5日前の75SMA
+      3. 75SMAの傾き上向き: 当日の75SMA > 20日前の75SMA
+      4. 高値圏: 終値 >= 過去120日の最高値 × 0.90（底値反発を排除）
     """
     return (
         (df['Close'] > df['ma5']) &
         (df['ma5'] > df['ma25']) &
         (df['ma25'] > df['ma75']) &
         (df['ma25_slope'] > 0) &
-        (df['ma75_slope'] > 0)
+        (df['ma75_slope'] > 0) &
+        (df['pct_from_120d_high'] >= -0.10)
     )
 
 
