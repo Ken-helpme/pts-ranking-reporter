@@ -158,6 +158,10 @@
     color: #8b5cf6;
 }
 
+.summary-quiet-accum .summary-value {
+    color: #059669;
+}
+
 .summary-disappeared .summary-value {
     color: #dc2626;
 }
@@ -606,6 +610,18 @@
     margin-left: 4px;
 }
 
+.badge-quiet-accum {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 9px;
+    font-weight: 700;
+    background: #059669;
+    color: #fff;
+    vertical-align: middle;
+    margin-left: 4px;
+}
+
 /* Phase badges */
 .badge-phase {
     display: inline-block;
@@ -656,6 +672,11 @@
 .tab-accel.active {
     color: #8b5cf6;
     border-bottom-color: #8b5cf6;
+}
+
+.tab-quiet-accum.active {
+    color: #059669;
+    border-bottom-color: #059669;
 }
 
 /* Trend labels */

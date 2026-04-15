@@ -70,9 +70,11 @@ function renderSummary(data) {
     document.getElementById('accelCount').textContent = s.accel ?? '-';
     document.getElementById('disappearedCount').textContent = s.disappeared ?? '-';
     document.getElementById('avgVB').textContent = s.avg_vb_ratio ?? '-';
+    document.getElementById('quietAccumCount').textContent = s.quiet_accum ?? '-';
     document.getElementById('tabAllCount').textContent = s.total ? `(${s.total})` : '';
     document.getElementById('tabUltraEarlyCount').textContent = s.ultra_early ? `(${s.ultra_early})` : '';
     document.getElementById('tabAccelCount').textContent = s.accel ? `(${s.accel})` : '';
+    document.getElementById('tabQuietAccumCount').textContent = s.quiet_accum ? `(${s.quiet_accum})` : '';
     document.getElementById('tabNewCount').textContent = s.new_5d ? `(${s.new_5d})` : '';
     document.getElementById('tabRecentCount').textContent = s.recent_10d ? `(${s.recent_10d})` : '';
     document.getElementById('tabContCount').textContent = s.continuing ? `(${s.continuing})` : '';
@@ -135,10 +137,15 @@ function getVisibleStocks() {
     switch (currentTab) {
         case 'ultra_early': return signalData.ultra_early || [];
         case 'accel': return signalData.accel || [];
+        case 'quiet_accum': return signalData.quiet_accum || [];
         case 'new_5d': return signalData.new_5d || [];
         case 'recent_10d': return signalData.recent_10d || [];
         case 'continuing': return signalData.continuing || [];
-        default: return signalData.all_signals || [];
+        default: {
+            const all = signalData.all_signals || [];
+            const qa = signalData.quiet_accum || [];
+            return all.concat(qa);
+        }
     }
 }
 
@@ -187,6 +194,7 @@ function renderTable() {
         const isNew = dsd <= 3;
         const typeBadge = s.is_accel ? '<span class="badge-accel">加速</span>'
             : s.is_ultra_early ? '<span class="badge-ultra-early">超初動</span>'
+            : s.is_quiet_accum ? '<span class="badge-quiet-accum">QA</span>'
             : isNew ? '<span class="badge-new">NEW</span>' : '';
 
         const phaseCls = s.phase === '過熱' ? 'phase-hot'

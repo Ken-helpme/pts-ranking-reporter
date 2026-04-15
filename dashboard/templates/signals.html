@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>シグナル監視 | PTSランキング</title>
     <link rel="stylesheet" href="/static/css/style.css">
-    <link rel="stylesheet" href="/static/css/signals.css?v=20260330b">
+    <link rel="stylesheet" href="/static/css/signals.css?v=20260415a">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap"
         rel="stylesheet">
 </head>
@@ -62,6 +62,11 @@
             <div class="summary-card summary-accel">
                 <div class="summary-label">加速</div>
                 <div class="summary-value" id="accelCount">-</div>
+                <div class="summary-sub">銘柄</div>
+            </div>
+            <div class="summary-card summary-quiet-accum">
+                <div class="summary-label">QA (静かな仕込み)</div>
+                <div class="summary-value" id="quietAccumCount">-</div>
                 <div class="summary-sub">銘柄</div>
             </div>
             <div class="summary-card summary-disappeared">
@@ -120,6 +125,9 @@
                 </button>
                 <button class="tab-btn tab-accel" data-tab="accel" onclick="switchTab('accel')">
                     加速 <span id="tabAccelCount" class="tab-count"></span>
+                </button>
+                <button class="tab-btn tab-quiet-accum" data-tab="quiet_accum" onclick="switchTab('quiet_accum')">
+                    QA <span id="tabQuietAccumCount" class="tab-count"></span>
                 </button>
                 <button class="tab-btn" data-tab="new_5d" onclick="switchTab('new_5d')">
                     新規 (5日) <span id="tabNewCount" class="tab-count"></span>
@@ -191,7 +199,7 @@
     <!-- トースト -->
     <div id="toast" class="toast"></div>
 
-    <script src="/static/js/signals.js?v=20260330b"></script>
+    <script src="/static/js/signals.js?v=20260415a"></script>
 </body>
 
 </html>

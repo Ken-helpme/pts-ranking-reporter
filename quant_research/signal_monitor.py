@@ -207,6 +207,25 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
 
     df['daily_ret'] = df.groupby('CodeStr')['Close'].pct_change()
 
+    # ── Quiet Accumulation (Type A) 用特徴量 ─────────────────
+    # vol_ratio_5_10: 直近5日平均出来高 / その前10日平均出来高
+    if 'vol_ratio_5_10' not in df.columns:
+        _vr_recent = g['Volume'].transform(
+            lambda x: x.rolling(5, min_periods=5).mean())
+        _vr_prior = g['Volume'].shift(5).groupby(df['CodeStr']).transform(
+            lambda x: x.rolling(10, min_periods=10).mean())
+        df['vol_ratio_5_10'] = _vr_recent / _vr_prior.replace(0, np.nan)
+
+    # max_daily_ret_5d: 直近5日の日次騰落率の最大値
+    if 'max_daily_ret_5d' not in df.columns:
+        df['max_daily_ret_5d'] = df.groupby('CodeStr')['daily_ret'].transform(
+            lambda x: x.rolling(5, min_periods=1).max())
+
+    # cum_ret_5d: 5日間累積騰落率
+    if 'cum_ret_5d' not in df.columns:
+        df['cum_ret_5d'] = df.groupby('CodeStr')['Close'].transform(
+            lambda x: x / x.shift(5) - 1)
+
     return df
 
 
@@ -231,6 +250,49 @@ def _early_momentum(df: pd.DataFrame) -> pd.Series:
         (df['ma25'] <= df['ma75'] * 1.05) &
         (df['Close'] <= df['ma25'] * 1.05) &
         (df['daily_ret'] < 0.05)
+    )
+
+
+def _quiet_accumulation(df: pd.DataFrame) -> pd.Series:
+    """
+    Type A: ベースからの初動型 — MA75の追従を待たずに初動を検知。
+
+    既存の _early_momentum は MA25 > MA75（パーフェクトオーダー）を要求するため
+    検知が遅い。Type A は MA25 > MA75 を不要とし、代わりに出来高の静かな増加と
+    MA25の上向き転換で「ベースからの脱出直後」を捕捉する。
+
+    閾値は4銘柄のロールモデル検証（verify_type_a_thresholds.py）で確定済み。
+    """
+    return (
+        # 1. 出来高の静かな増加（急騰ではない）
+        (df['vol_ratio_5_10'] >= 1.10) &
+        (df['vol_ratio_5_10'] <= 2.5) &
+        # 2. 価格位置（MA25突破、MA75近傍以上、短期MA上抜け）
+        #    ※ MA25 > MA75 は不要 — これが既存ロジックとの最大の違い
+        (df['Close'] > df['ma25']) &
+        (df['Close'] > df['ma75'] * 0.97) &
+        (df['ma5'] > df['ma25']) &
+        # 3. 急騰排除
+        (df['max_daily_ret_5d'] <= 0.12) &
+        (df['cum_ret_5d'] <= 0.40) &
+        # 4. 25日線が上向き始めている
+        (df['ma25_slope'] > 0)
+    )
+
+
+def compute_quiet_accum_signals(df: pd.DataFrame, etf_codes: set,
+                                growing_codes: set) -> pd.Series:
+    """
+    Quiet Accumulation シグナル（Type A）: 他シグナルと排他。
+    売買代金5000万以上で営業利益成長銘柄に限定。
+    """
+    return (
+        _quiet_accumulation(df) &
+        (~df['price_frozen_5d']) &
+        (df['turnover_avg_20'] >= 5e7) &
+        (~df['CodeStr'].isin(etf_codes)) &
+        (df['CodeStr'].isin(growing_codes)) &
+        (~df['_signal']) & (~df['_ultra_early']) & (~df['_accel'])
     )
 
 
@@ -353,6 +415,7 @@ def get_signal_stocks(data_dir: Optional[str] = None, force: bool = False) -> di
     df['_signal'] = compute_signals(df, etf_codes, growing_codes)
     df['_ultra_early'] = compute_ultra_early_signals(df, etf_codes, growing_codes)
     df['_accel'] = compute_accel_signals(df, etf_codes, growing_codes)
+    df['_quiet_accum'] = compute_quiet_accum_signals(df, etf_codes, growing_codes)
 
     all_dates = sorted(df['Date'].unique())
     latest_date = all_dates[-1]
@@ -571,6 +634,17 @@ def get_signal_stocks(data_dir: Optional[str] = None, force: bool = False) -> di
     for r in accel_records:
         r['is_accel'] = True
 
+    # Quiet Accumulation (Type A) records (latest date only)
+    qa_mask = (df['Date'] == latest_date) & df['_quiet_accum']
+    qa_codes = set(df.loc[qa_mask, 'CodeStr'])
+    qa_records = _build_records(qa_codes, latest_rows, df)
+    vr_map = latest_rows.set_index('CodeStr')['vol_ratio_5_10'].to_dict()
+    for r in qa_records:
+        r['is_quiet_accum'] = True
+        vr = vr_map.get(r['code_full'])
+        if pd.notna(vr):
+            r['vol_ratio_5_10'] = round(float(vr), 2)
+
     all_signals = new_records + recent_records + cont_records
 
     # ML scoring (optional — only if model exists)
@@ -602,10 +676,12 @@ def get_signal_stocks(data_dir: Optional[str] = None, force: bool = False) -> di
             'disappeared': len(disap_records),
             'ultra_early': len(ue_records),
             'accel': len(accel_records),
+            'quiet_accum': len(qa_records),
             'avg_vb_ratio': avg_vb,
         },
         'ultra_early': ue_records,
         'accel': accel_records,
+        'quiet_accum': qa_records,
         'new_5d': new_records,
         'recent_10d': recent_records,
         'continuing': cont_records,
